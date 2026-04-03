@@ -3,7 +3,6 @@ package com.ywacko.aliyun.tdx.attestation.jna;
 import com.ywacko.aliyun.tdx.attestation.exception.QuoteGenerationException;
 import com.ywacko.aliyun.tdx.attestation.model.QuoteGenerationRequest;
 import com.ywacko.aliyun.tdx.attestation.model.QuoteGenerationResult;
-import com.ywacko.aliyun.tdx.attestation.process.QuoteProvider;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,7 +12,7 @@ import java.util.Objects;
  * 通过 JNA 直接生成 Quote 的 provider。
  * 当前要求调用进程直接运行在阿里云 TDX VM 中。
  */
-public final class JnaQuoteProvider implements QuoteProvider {
+public final class JnaQuoteProvider {
 
     // 实际执行 native 调用的封装层。
     private final NativeTdxAttestationApi nativeApi;
@@ -29,7 +28,6 @@ public final class JnaQuoteProvider implements QuoteProvider {
         return new Builder();
     }
 
-    @Override
     public QuoteGenerationResult generateQuote(QuoteGenerationRequest request) {
         Objects.requireNonNull(request, "request");
         validateEnvironment();

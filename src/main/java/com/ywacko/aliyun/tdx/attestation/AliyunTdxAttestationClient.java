@@ -4,24 +4,21 @@ import com.ywacko.aliyun.tdx.attestation.model.DeploymentFingerprint;
 import com.ywacko.aliyun.tdx.attestation.model.QuoteGenerationRequest;
 import com.ywacko.aliyun.tdx.attestation.model.QuoteGenerationResult;
 import com.ywacko.aliyun.tdx.attestation.jna.JnaQuoteProvider;
-import com.ywacko.aliyun.tdx.attestation.process.QuoteProvider;
+import com.ywacko.aliyun.tdx.attestation.jna.NativeTdxAttestationApi;
 
 import java.nio.file.Path;
-import java.util.Objects;
 
 /**
  * 阿里云 TDX 远程证明客户端。
- * 当前默认直接通过 JNA 调本机 libtdx_attest.so。
+ * 当前仅保留通过 JNA 调本机 libtdx_attest.so 的单链路实现。
  */
 public final class AliyunTdxAttestationClient {
 
-    // 具体的 Quote 生成实现，当前默认走 JNA 直连。
-    private final QuoteProvider quoteProvider;
+    // 当前固定通过 JNA provider 生成 Quote。
+    private final JnaQuoteProvider quoteProvider;
 
     private AliyunTdxAttestationClient(Builder builder) {
-        this.quoteProvider = builder.quoteProvider != null
-                ? builder.quoteProvider
-                : JnaQuoteProvider.builder().build();
+        this.quoteProvider = builder.jnaBuilder.build();
     }
 
     public static Builder builder() {
@@ -37,31 +34,25 @@ public final class AliyunTdxAttestationClient {
     }
 
     public static final class Builder {
-        // 若调用方显式替换实现，则直接使用传入 provider。
-        private QuoteProvider quoteProvider;
-        // 默认 JNA builder，便于按需覆写库名和设备路径。
+        // 当前只保留 JNA builder，便于按需覆写库名和设备路径。
         private final JnaQuoteProvider.Builder jnaBuilder = JnaQuoteProvider.builder();
 
         private Builder() {
         }
 
-        public Builder quoteProvider(QuoteProvider quoteProvider) {
-            this.quoteProvider = quoteProvider;
-            return this;
-        }
-
-        public Builder useJna() {
-            this.quoteProvider = jnaBuilder.build();
+        // 允许测试或特殊环境显式替换 native API。
+        public Builder nativeApi(NativeTdxAttestationApi nativeApi) {
+            jnaBuilder.nativeApi(nativeApi);
             return this;
         }
 
         public Builder libraryName(String libraryName) {
-            this.quoteProvider = jnaBuilder.libraryName(libraryName).build();
+            jnaBuilder.libraryName(libraryName);
             return this;
         }
 
         public Builder tdxDevicePath(Path tdxDevicePath) {
-            this.quoteProvider = jnaBuilder.tdxDevicePath(tdxDevicePath).build();
+            jnaBuilder.tdxDevicePath(tdxDevicePath);
             return this;
         }
 

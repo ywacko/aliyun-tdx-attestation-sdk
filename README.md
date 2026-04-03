@@ -42,7 +42,6 @@ DeploymentFingerprint fingerprint = DeploymentFingerprint.builder()
         .build();
 
 AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
-        .useJna()
         .build();
 
 QuoteGenerationResult result = client.generateQuote(fingerprint);
@@ -125,7 +124,6 @@ SDK 实际运行时依赖：
 
 ```java
 AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
-        .useJna()
         .build();
 ```
 
@@ -165,9 +163,8 @@ AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
 - `DeploymentFingerprint -> digest -> report_data` 生成逻辑
 - `JNA` 直连 `libtdx_attest.so` 的主调用链
 - 本地 `mvn test` 验证通过
-
-当前还未完成的只有一项：
-
-- 需要在真实阿里云 `TDX VM` 上对 `JNA` 直连路径做一次端到端联调
+- 已在真实阿里云 `TDX VM` 上跑通端到端联调
+- 已在阿里云 `TDX VM` 上通过纯 `JNA` 路径成功生成 `Quote`
+- 已对 `SDK` 生成出的 `Quote` 完成正式验证，`overall_appraisal_result = 1`
 
 详细设计见 [sdk-design.md](docs/sdk-design.md)。
