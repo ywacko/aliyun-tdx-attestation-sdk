@@ -3,12 +3,10 @@ package com.ywacko.aliyun.tdx.attestation;
 import com.ywacko.aliyun.tdx.attestation.model.DeploymentFingerprint;
 import com.ywacko.aliyun.tdx.attestation.model.QuoteGenerationRequest;
 import com.ywacko.aliyun.tdx.attestation.model.QuoteGenerationResult;
-import com.ywacko.aliyun.tdx.attestation.process.ProcessQuoteProvider;
+import com.ywacko.aliyun.tdx.attestation.jna.JnaQuoteProvider;
 import com.ywacko.aliyun.tdx.attestation.process.QuoteProvider;
 
 import java.nio.file.Path;
-import java.time.Duration;
-import java.util.List;
 import java.util.Objects;
 
 public final class AliyunTdxAttestationClient {
@@ -16,7 +14,9 @@ public final class AliyunTdxAttestationClient {
     private final QuoteProvider quoteProvider;
 
     private AliyunTdxAttestationClient(Builder builder) {
-        this.quoteProvider = Objects.requireNonNull(builder.quoteProvider, "quoteProvider");
+        this.quoteProvider = builder.quoteProvider != null
+                ? builder.quoteProvider
+                : JnaQuoteProvider.builder().build();
     }
 
     public static Builder builder() {
@@ -33,6 +33,7 @@ public final class AliyunTdxAttestationClient {
 
     public static final class Builder {
         private QuoteProvider quoteProvider;
+        private final JnaQuoteProvider.Builder jnaBuilder = JnaQuoteProvider.builder();
 
         private Builder() {
         }
@@ -42,27 +43,18 @@ public final class AliyunTdxAttestationClient {
             return this;
         }
 
-        public Builder helperCommand(List<String> helperCommand) {
-            this.quoteProvider = ProcessQuoteProvider.builder()
-                    .helperCommand(helperCommand)
-                    .build();
+        public Builder useJna() {
+            this.quoteProvider = jnaBuilder.build();
             return this;
         }
 
-        public Builder helperCommand(List<String> helperCommand, Duration timeout) {
-            this.quoteProvider = ProcessQuoteProvider.builder()
-                    .helperCommand(helperCommand)
-                    .timeout(timeout)
-                    .build();
+        public Builder libraryName(String libraryName) {
+            this.quoteProvider = jnaBuilder.libraryName(libraryName).build();
             return this;
         }
 
-        public Builder helperCommand(List<String> helperCommand, Duration timeout, Path workingDirectory) {
-            this.quoteProvider = ProcessQuoteProvider.builder()
-                    .helperCommand(helperCommand)
-                    .timeout(timeout)
-                    .workingDirectory(workingDirectory)
-                    .build();
+        public Builder tdxDevicePath(Path tdxDevicePath) {
+            this.quoteProvider = jnaBuilder.tdxDevicePath(tdxDevicePath).build();
             return this;
         }
 

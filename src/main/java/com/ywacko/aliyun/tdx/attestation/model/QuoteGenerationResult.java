@@ -13,20 +13,20 @@ public final class QuoteGenerationResult {
     private final String reportDataHex;
     private final Integer quoteSize;
     private final String provider;
-    private final String helperVersion;
+    private final String providerVersion;
 
     public QuoteGenerationResult(byte[] quoteBytes,
                                  String deploymentDigestHex,
                                  String reportDataHex,
                                  Integer quoteSize,
                                  String provider,
-                                 String helperVersion) {
+                                 String providerVersion) {
         this.quoteBytes = Objects.requireNonNull(quoteBytes, "quoteBytes").clone();
         this.deploymentDigestHex = Objects.requireNonNull(deploymentDigestHex, "deploymentDigestHex");
         this.reportDataHex = Objects.requireNonNull(reportDataHex, "reportDataHex");
         this.quoteSize = quoteSize;
         this.provider = provider;
-        this.helperVersion = helperVersion;
+        this.providerVersion = providerVersion;
     }
 
     public byte[] getQuoteBytes() {
@@ -57,7 +57,7 @@ public final class QuoteGenerationResult {
         return provider;
     }
 
-    public String getHelperVersion() {
-        return helperVersion;
+    public String getProviderVersion() {
+        return providerVersion;
     }
 }

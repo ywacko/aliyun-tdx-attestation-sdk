@@ -7,12 +7,12 @@
     <artifactId>aliyun-tdx-attestation-sdk</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <name>aliyun-tdx-attestation-sdk</name>
-    <description>Java SDK for generating Aliyun TDX attestation quotes via a local helper bridge</description>
+    <description>Java SDK for generating Aliyun TDX attestation quotes via direct JNA binding</description>
 
     <properties>
         <maven.compiler.release>11</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <jackson.version>2.17.2</jackson.version>
+        <jna.version>5.14.0</jna.version>
         <junit.version>5.10.2</junit.version>
         <maven.compiler.plugin.version>3.11.0</maven.compiler.plugin.version>
         <maven.surefire.version>3.2.5</maven.surefire.version>
@@ -20,9 +20,9 @@
 
     <dependencies>
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-            <version>${jackson.version}</version>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+            <version>${jna.version}</version>
         </dependency>
 
         <dependency>

@@ -1,27 +1,33 @@
 # aliyun-tdx-attestation-sdk
 
-`aliyun-tdx-attestation-sdk` 是一个面向 Java 服务的 SDK，用于在阿里云 `TDX VM` 内通过本地 helper bridge 生成 attestation `Quote`。
+`aliyun-tdx-attestation-sdk` 是一个面向 Java 服务的 SDK，用于在阿里云 `TDX VM` 内通过 `JNA` 直接调用本机 `TDX` 运行时生成 attestation `Quote`。
+
+这套 SDK 的运行前提是：
+
+- 当前服务必须运行在阿里云 `TDX VM` 中
+- 当前机器必须存在 `/dev/tdx_guest`
+- 当前机器必须具备 `TDX` 本地运行时能力，例如 `libtdx_attest.so`
+
+这不是一个“任意 Linux 机器都能直接使用”的通用 SDK。脱离阿里云 `TDX VM` 前提后，`Quote` 生成能力本身就不成立。
 
 当前设计目标不是让 `TeeGateway` 直接处理 `libtdx_attest.so` 的 native 细节，而是提供一层稳定的 Java API：
 
 - 根据 `TeeGateway` 部署级指纹生成 canonical JSON
 - 计算 `SHA-256` 摘要
 - 组装 64 字节 `report_data`
-- 调用本地 helper 生成 `Quote`
+- 通过 `JNA` 直接调用 `libtdx_attest.so` 生成 `Quote`
 - 把 `Quote`、`report_data` 和摘要信息以 Java 模型返回给业务代码
 
-仓库同时包含两部分代码：
+仓库当前核心代码全部位于：
 
 - `src/main/java`
   - Java SDK
-- `native`
-  - 可直接在阿里云 `TDX VM` 上编译的 `tdx-quote-helper`
 
 ## 当前边界
 
 - SDK 对外暴露 Java API
-- SDK 内部第一版通过本地 helper 可执行程序调用 TDX 能力
-- helper 负责最终调用阿里云 `TDX` 本地接口，例如 `tdx_att_get_quote(...)`
+- SDK 内部当前通过 `JNA` 直接调用 `libtdx_attest.so`
+- SDK 不依赖额外 helper 部署
 - SDK 不直接内嵌 `JNI`
 
 ## 快速示例
@@ -36,8 +42,7 @@ DeploymentFingerprint fingerprint = DeploymentFingerprint.builder()
         .build();
 
 AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
-        .helperCommand(List.of("/usr/local/bin/tdx-quote-helper"))
-        .timeout(Duration.ofSeconds(15))
+        .useJna()
         .build();
 
 QuoteGenerationResult result = client.generateQuote(fingerprint);
@@ -47,30 +52,21 @@ String digestHex = result.getDeploymentDigestHex();
 String reportDataHex = result.getReportDataHex();
 ```
 
-## helper 协议
+## 运行机制
 
-SDK 默认通过 JSON over stdin/stdout 与 helper 交互。
+SDK 当前的主路径是：
 
-输入示例：
+- Java 代码生成 64 字节 `report_data`
+- SDK 通过 `JNA` 加载 `libtdx_attest.so`
+- SDK 直接调用 `tdx_att_get_quote(...)`
+- SDK 返回 `Quote` 字节、Base64 和 `report_data` 相关元数据
 
-```json
-{
-  "reportDataHex": "60ec27a1f310ff4203a1b5ed21f2661ac0c9617b7a0800f695f56d059fd8f5810000000000000000000000000000000000000000000000000000000000000000",
-  "deploymentDigestHex": "60ec27a1f310ff4203a1b5ed21f2661ac0c9617b7a0800f695f56d059fd8f581"
-}
-```
+这意味着：
 
-输出示例：
-
-```json
-{
-  "quoteBase64": "BASE64_ENCODED_QUOTE",
-  "quoteSize": 5006,
-  "reportDataHex": "60ec27a1f310ff4203a1b5ed21f2661ac0c9617b7a0800f695f56d059fd8f5810000000000000000000000000000000000000000000000000000000000000000",
-  "provider": "aliyun-tdx-helper",
-  "helperVersion": "0.1.0"
-}
-```
+- `TeeGateway` 只需要 Maven 引入 SDK
+- 不需要额外部署 helper 服务
+- 但运行机器必须是阿里云 `TDX VM`
+- 运行机器必须存在 `/dev/tdx_guest` 和 `libtdx_attest.so`
 
 ## 部署步骤
 
@@ -109,50 +105,27 @@ mvn package
 target/aliyun-tdx-attestation-sdk-0.1.0-SNAPSHOT.jar
 ```
 
-### 3. 在阿里云 TDX VM 上编译 helper
+### 3. 运行时要求
 
-进入 native 目录：
-
-```bash
-cd native
-make
-```
-
-产物为：
-
-```text
-native/tdx-quote-helper
-```
-
-建议安装到固定路径，例如：
-
-```bash
-install -m 0755 tdx-quote-helper /usr/local/bin/tdx-quote-helper
-```
-
-### 4. helper 运行要求
-
-helper 实际运行时依赖：
+SDK 实际运行时依赖：
 
 - `libtdx_attest.so`
 - `/dev/tdx_guest`
 
-如果 helper 运行在宿主机上，通常不需要额外处理。
+如果 `TeeGateway` 运行在宿主机上，通常只需要保证上述两个条件成立。
 
-如果 helper 运行在容器内，至少要保证：
+如果 `TeeGateway` 运行在容器内，至少要保证：
 
-- 挂载 `/dev/tdx_guest`
+- 容器内可访问 `/dev/tdx_guest`
 - 容器内可找到 `libtdx_attest.so`
-- 容器镜像中包含 `tdx-quote-helper`
+- JVM 有权限加载本地动态库
+### 4. TeeGateway 接入方式
 
-### 5. TeeGateway 接入方式
-
-`TeeGateway` 不需要直接处理 C 接口，只需要引用 Java SDK，并配置 helper 路径：
+`TeeGateway` 不需要直接处理 C 接口，只需要引用 Java SDK：
 
 ```java
 AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
-        .helperCommand(List.of("/usr/local/bin/tdx-quote-helper"))
-        .timeout(Duration.ofSeconds(15))
+        .useJna()
         .build();
 ```
 
@@ -163,34 +136,38 @@ AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
 3. 取出 `quoteBase64`
 4. 封装到 `TeeGateway` 接口返回
 
-### 6. 推荐部署形态
+### 5. 推荐集成形态
 
 当前更推荐下面这条路径：
 
-- Java SDK 跟随 `TeeGateway` 一起打包
-- `tdx-quote-helper` 作为本机 helper 安装在宿主机或容器内固定路径
-- `TeeGateway` 通过 `ProcessBuilder` 调 helper
+- `TeeGateway` 通过 Maven 依赖引入 `aliyun-tdx-attestation-sdk`
+- SDK 通过 `JNA` 直接调用阿里云 `TDX` 本地运行时
+- `TeeGateway` 不需要额外部署 helper 或宿主机 attestation service
 
 这样做的优点是：
 
+- `TeeGateway` 只需要 Maven 引入 SDK 即可使用
 - Java 侧不需要 JNI
-- native 依赖边界清楚
-- helper 后续可以独立替换或升级
+- 不需要额外部署 helper
+- native 调用边界仍然集中在 SDK 内部
 
-### 7. 当前验证状态
+当前推荐的版本边界是：
+
+- Java 层通过 Maven 坐标管理 SDK 版本
+- 运行机器通过阿里云 `TDX VM` 和本地运行时提供底层能力
+- SDK 版本与业务服务版本按正常依赖关系管理
+
+### 6. 当前验证状态
 
 当前仓库内已经完成：
 
 - Java SDK 代码骨架
 - `DeploymentFingerprint -> digest -> report_data` 生成逻辑
-- helper 协议定义
-- native helper 实现
+- `JNA` 直连 `libtdx_attest.so` 的主调用链
 - 本地 `mvn test` 验证通过
 
 当前还未完成的只有一项：
 
-- 需要把 `native/tdx-quote-helper` 在真实阿里云 `TDX VM` 上编译并做一次端到端联调
-
-native helper 的编译说明见 [native/README.md](native/README.md)。
+- 需要在真实阿里云 `TDX VM` 上对 `JNA` 直连路径做一次端到端联调
 
 详细设计见 [sdk-design.md](docs/sdk-design.md)。

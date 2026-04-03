@@ -18,23 +18,24 @@
   - 负责部署级指纹模型
   - 负责 canonical JSON 和 `SHA-256` 摘要
   - 负责生成 64 字节 `report_data`
-  - 负责调用 helper 并返回 `Quote`
-- helper bridge 层
+  - 负责通过 `JNA` 调用 native `TDX` 库并返回 `Quote`
+- Native `TDX` 运行时层
   - 运行在阿里云 `TDX VM` 内
-  - 负责调用 `libtdx_attest.so`
-  - 负责最终执行 `tdx_att_get_quote(...)`
+  - 提供 `libtdx_attest.so`
+  - 最终执行 `tdx_att_get_quote(...)`
 
-当前仓库已经同时放入两部分实现：
+当前仓库当前的核心实现位于：
 
 - Java SDK 实现：`src/main/java`
-- native helper 实现：`native/tdx-quote-helper.c`
 
 这样做的理由是：
 
 - `TeeGateway` 当前是 Java 服务
 - 阿里云现成能力是 C 库接口
-- 第一版用 helper bridge 比直接上 `JNI` 更稳
-- Java API 可以先固定，helper 内部实现后续仍可替换为 `JNA/JNI`
+- 使用 `JNA` 可以直接从 Java 映射到本地 C 库
+- 这样可以避免额外部署 helper 进程
+- Java API 可以固定在 SDK 层，后续如有必要再替换成 `JNI`
+- `TeeGateway` 后续应通过 Maven 依赖引入 SDK，而不是直接复制 SDK 源码
 
 ## 3. 部署级指纹与 report_data
 
@@ -56,7 +57,7 @@ SDK 处理流程如下：
 2. 对 canonical JSON 计算 `SHA-256`
 3. 将 32 字节摘要写入 64 字节 `report_data` 的前 32 字节
 4. 剩余 32 字节补零
-5. 将完整 64 字节 `report_data` 交给 helper
+5. 将完整 64 字节 `report_data` 交给本地 `TDX` native 调用
 
 这样做的好处是：
 
@@ -76,73 +77,37 @@ SDK 处理流程如下：
 - `QuoteGenerationRequest`
   - 表示显式传入的生成请求
 - `QuoteGenerationResult`
-  - 返回 `Quote`、摘要、`report_data` 和 helper 元信息
+  - 返回 `Quote`、摘要、`report_data` 和 provider 元信息
 
-## 5. helper 协议
+## 5. 运行要求
 
-### 5.1 输入
+SDK 的运行前提必须明确：
 
-SDK 通过 helper 的标准输入发送 JSON：
+- 当前服务运行在阿里云 `TDX VM`
+- 当前机器存在 `/dev/tdx_guest`
+- 当前机器可加载 `libtdx_attest.so`
 
-```json
-{
-  "reportDataHex": "<128 hex chars>",
-  "deploymentDigestHex": "<64 hex chars>"
-}
-```
-
-字段说明：
-
-- `reportDataHex`
-  - 完整 64 字节 `report_data`
-  - 128 个十六进制字符
-- `deploymentDigestHex`
-  - 原始部署级指纹 `SHA-256`
-  - 64 个十六进制字符
-
-### 5.2 输出
-
-helper 标准输出返回 JSON：
-
-```json
-{
-  "quoteBase64": "<base64>",
-  "quoteSize": 5006,
-  "reportDataHex": "<128 hex chars>",
-  "provider": "aliyun-tdx-helper",
-  "helperVersion": "0.1.0"
-}
-```
-
-字段说明：
-
-- `quoteBase64`
-  - 必填，Base64 编码后的 `Quote`
-- `quoteSize`
-  - 可选，返回 `Quote` 原始字节长度
-- `reportDataHex`
-  - 可选，helper 回显最终使用的 `report_data`
-- `provider`
-  - 可选，helper 提供方标识
-- `helperVersion`
-  - 可选，helper 版本
-
-## 6. 容器与运行要求
+如果上述前提不成立，`Quote` 生成能力本身就不成立。
 
 如果后续把 `TeeGateway` 放进 Docker 容器，运行要求至少包括：
 
 - 容器内可访问 `/dev/tdx_guest`
-- 容器内可调用 helper 可执行文件
-- helper 运行环境可访问 `libtdx_attest.so`
-- helper 若依赖 verifier 或其他本地能力，需同步挂载相关配置和库
+- 容器内可加载 `libtdx_attest.so`
+- JVM 进程有权限访问本地 `TDX` 运行时能力
 
-## 7. 后续演进
+## 6. 后续演进
 
-当前第一版先固定 SDK API 和 helper 协议。
+当前第一版先固定 SDK API 和 `JNA` 直连路径。
+
+当前推荐的集成方式是：
+
+- `TeeGateway` 通过 Maven 依赖接入 `aliyun-tdx-attestation-sdk`
+- SDK 直接通过 `JNA` 调本地 `TDX` 运行时
+- 不额外部署 helper 或宿主机 attestation service
 
 后续可演进方向：
 
-- 提供 JNI/JNA 实现，替换 process bridge
+- 提供 `JNI` 实现，替换当前 `JNA` 实现
 - 增加 `Quote` 验证结果模型
 - 增加 `MRTD`、`RTMR` 等字段的解析模型
 - 增加 `TeeGateway` 直接集成示例
