@@ -2,12 +2,21 @@ package com.ywacko.aliyun.tdx.attestation.model;
 
 import java.util.Objects;
 
+/**
+ * 待绑定到 attestation 的部署级指纹。
+ * 当前字段顺序固定，用于生成稳定 canonical JSON。
+ */
 public final class DeploymentFingerprint {
 
+    // 服务标识，当前固定对应 tee-gateway。
     private final String service;
+    // 容器名，用于表达当前运行实例的部署口径。
     private final String containerName;
+    // 镜像引用，通常包含仓库名和 tag。
     private final String imageRef;
+    // 镜像内容标识，优先使用 image id 或 digest。
     private final String imageId;
+    // 代码版本，当前直接使用 git commit。
     private final String gitRev;
 
     private DeploymentFingerprint(Builder builder) {
@@ -43,6 +52,7 @@ public final class DeploymentFingerprint {
     }
 
     public String toCanonicalJson() {
+        // 当前直接手工拼接固定字段顺序，避免序列化器差异影响摘要稳定性。
         return "{\"service\":\"" + escape(service)
                 + "\",\"container_name\":\"" + escape(containerName)
                 + "\",\"image_ref\":\"" + escape(imageRef)

@@ -4,6 +4,10 @@ import com.ywacko.aliyun.tdx.attestation.util.HexUtils;
 
 import java.util.Arrays;
 
+/**
+ * TDX report_data 的 64 字节表示。
+ * 当前约定前 32 字节写部署级指纹摘要，后 32 字节补零。
+ */
 public final class ReportData {
 
     public static final int REPORT_DATA_SIZE = 64;
@@ -27,6 +31,7 @@ public final class ReportData {
             throw new IllegalArgumentException("deployment digest must be exactly 32 bytes");
         }
         byte[] reportData = new byte[REPORT_DATA_SIZE];
+        // 当前只把部署级摘要放进前 32 字节，剩余部分显式补零。
         System.arraycopy(digest, 0, reportData, 0, DEPLOYMENT_DIGEST_SIZE);
         return new ReportData(reportData);
     }

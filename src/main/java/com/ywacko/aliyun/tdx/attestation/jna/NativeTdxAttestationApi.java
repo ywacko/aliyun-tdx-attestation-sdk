@@ -5,6 +5,10 @@ import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
 import com.ywacko.aliyun.tdx.attestation.exception.QuoteGenerationException;
 
+/**
+ * 对 libtdx_attest.so 的最小 native 调用封装。
+ * 当前只负责把 64 字节 report_data 换成 Quote 字节。
+ */
 public class NativeTdxAttestationApi {
 
     private final TdxAttestLibrary library;
@@ -35,8 +39,10 @@ public class NativeTdxAttestationApi {
         }
 
         try {
+            // 当前直接把 native 返回的连续内存拷成 Java byte[]。
             return quotePointer.getByteArray(0, quoteSize);
         } finally {
+            // Quote 内存由 libtdx_attest 分配，释放也必须走对应 native 接口。
             library.tdx_att_free_quote(quotePointer);
         }
     }
