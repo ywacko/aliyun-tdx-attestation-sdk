@@ -5,7 +5,7 @@
 
     <groupId>com.ywacko</groupId>
     <artifactId>aliyun-tdx-attestation-sdk</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <name>aliyun-tdx-attestation-sdk</name>
     <description>Java SDK for generating Aliyun TDX attestation quotes via direct JNA binding</description>
 
