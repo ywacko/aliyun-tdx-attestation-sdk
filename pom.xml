@@ -5,9 +5,17 @@
 
     <groupId>com.ywacko</groupId>
     <artifactId>aliyun-tdx-attestation-sdk</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
     <name>aliyun-tdx-attestation-sdk</name>
     <description>Java SDK for generating Aliyun TDX attestation quotes via direct JNA binding</description>
+
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/ywacko/aliyun-tdx-attestation-sdk</url>
+        </repository>
+    </distributionManagement>
 
     <properties>
         <maven.compiler.release>11</maven.compiler.release>
