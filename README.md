@@ -18,6 +18,12 @@
 - 通过 `JNA` 直接调用 `libtdx_attest.so` 生成 `Quote`
 - 把 `Quote`、`report_data` 和摘要信息以 Java 模型返回给业务代码
 
+当前部署级指纹包含三个核心字段：
+
+- `service`
+- `image_digest`
+- `git_rev`
+
 仓库当前核心代码全部位于：
 
 - `src/main/java`
@@ -35,9 +41,7 @@
 ```java
 DeploymentFingerprint fingerprint = DeploymentFingerprint.builder()
         .service("tee-gateway")
-        .containerName("tee-gateway")
-        .imageRef("ywackoo/tee-gateway:20260402")
-        .imageId("a6c80d35a995")
+        .imageDigest("ywackoo/tee-gateway@sha256:3872a935ba90b46925684a818401a682fb1aefd70b397e9c110bbbd2781aef46")
         .gitRev("021b2d7")
         .build();
 
@@ -129,7 +133,7 @@ AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
 
 接入流程建议固定为：
 
-1. 从当前网关运行信息组装 `DeploymentFingerprint`
+1. 组装包含 `service`、`image_digest`、`git_rev` 的 `DeploymentFingerprint`
 2. 调用 `client.generateQuote(fingerprint)`
 3. 取出 `quoteBase64`
 4. 封装到 `TeeGateway` 接口返回

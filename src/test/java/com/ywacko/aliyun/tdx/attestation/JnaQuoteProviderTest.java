@@ -32,9 +32,7 @@ class JnaQuoteProviderTest {
 
         DeploymentFingerprint fingerprint = DeploymentFingerprint.builder()
                 .service("tee-gateway")
-                .containerName("tee-gateway")
-                .imageRef("ywackoo/tee-gateway:20260402")
-                .imageId("a6c80d35a995")
+                .imageDigest("ywackoo/tee-gateway@sha256:3872a935ba90b46925684a818401a682fb1aefd70b397e9c110bbbd2781aef46")
                 .gitRev("021b2d7")
                 .build();
 
@@ -46,7 +44,7 @@ class JnaQuoteProviderTest {
         assertArrayEquals(fakeQuote, result.getQuoteBytes());
         assertEquals("aliyun-tdx-jna", result.getProvider());
         assertEquals(Integer.valueOf(fakeQuote.length), result.getQuoteSize());
-        assertEquals("60ec27a1f310ff4203a1b5ed21f2661ac0c9617b7a0800f695f56d059fd8f581", result.getDeploymentDigestHex());
+        assertEquals("cfed02c8b7159dda5478fa6df432c3626f18c5e457346d111dd9134192f7aa51", result.getDeploymentDigestHex());
     }
 
     private static final class FakeTdxAttestLibrary implements TdxAttestLibrary {

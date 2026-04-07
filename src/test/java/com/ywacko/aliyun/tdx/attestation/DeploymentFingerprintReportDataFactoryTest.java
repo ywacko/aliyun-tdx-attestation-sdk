@@ -14,20 +14,18 @@ class DeploymentFingerprintReportDataFactoryTest {
     void shouldBuildCanonicalJsonDigestAndReportData() {
         DeploymentFingerprint fingerprint = DeploymentFingerprint.builder()
                 .service("tee-gateway")
-                .containerName("tee-gateway")
-                .imageRef("ywackoo/tee-gateway:20260402")
-                .imageId("a6c80d35a995")
+                .imageDigest("ywackoo/tee-gateway@sha256:3872a935ba90b46925684a818401a682fb1aefd70b397e9c110bbbd2781aef46")
                 .gitRev("021b2d7")
                 .build();
 
         String canonicalJson = DeploymentFingerprintReportDataFactory.canonicalJson(fingerprint);
-        assertEquals("{\"service\":\"tee-gateway\",\"container_name\":\"tee-gateway\",\"image_ref\":\"ywackoo/tee-gateway:20260402\",\"image_id\":\"a6c80d35a995\",\"git_rev\":\"021b2d7\"}", canonicalJson);
+        assertEquals("{\"service\":\"tee-gateway\",\"image_digest\":\"ywackoo/tee-gateway@sha256:3872a935ba90b46925684a818401a682fb1aefd70b397e9c110bbbd2781aef46\",\"git_rev\":\"021b2d7\"}", canonicalJson);
 
         String digestHex = DeploymentFingerprintReportDataFactory.digestHex(fingerprint);
-        assertEquals("60ec27a1f310ff4203a1b5ed21f2661ac0c9617b7a0800f695f56d059fd8f581", digestHex);
+        assertEquals("cfed02c8b7159dda5478fa6df432c3626f18c5e457346d111dd9134192f7aa51", digestHex);
 
         ReportData reportData = DeploymentFingerprintReportDataFactory.reportData(fingerprint);
-        assertEquals("60ec27a1f310ff4203a1b5ed21f2661ac0c9617b7a0800f695f56d059fd8f5810000000000000000000000000000000000000000000000000000000000000000", reportData.toHex());
+        assertEquals("cfed02c8b7159dda5478fa6df432c3626f18c5e457346d111dd9134192f7aa510000000000000000000000000000000000000000000000000000000000000000", reportData.toHex());
         assertArrayEquals(new byte[32], sliceTail(reportData.getBytes()));
     }
 

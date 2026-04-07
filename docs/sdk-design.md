@@ -44,12 +44,34 @@
 ```json
 {
   "service": "tee-gateway",
-  "container_name": "tee-gateway",
-  "image_ref": "ywackoo/tee-gateway:20260402",
-  "image_id": "a6c80d35a995",
+  "image_digest": "ywackoo/tee-gateway@sha256:3872a935ba90b46925684a818401a682fb1aefd70b397e9c110bbbd2781aef46",
   "git_rev": "021b2d7"
 }
 ```
+
+当前最终方案将下面三个字段纳入核心部署级指纹：
+
+1. `service`
+2. `image_digest`
+3. `git_rev`
+
+选择这个方案的原因是：
+
+1. `service` 用于表达当前绑定的是哪个服务
+2. `image_digest` 用于表达当前绑定的是哪份不可变镜像内容
+3. `git_rev` 用于表达当前绑定的是哪版源码
+
+当前不再把以下字段纳入核心部署级指纹：
+
+1. `container_name`
+2. `image_ref`
+3. `image_id`
+
+原因如下：
+
+1. `container_name` 在扩容或更换编排方式后容易变化，不适合作为长期身份锚点
+2. `image_ref` 更适合做展示和排查字段，但 tag 口径不够稳定
+3. `image_id` 更偏本地 Docker 运行时视角，不如 `image_digest` 适合作为跨环境一致的镜像内容标识
 
 SDK 处理流程如下：
 
