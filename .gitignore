@@ -1,3 +1,4 @@
-target/
-*.class
-native/tdx-quote-helper
+/target/
+/.idea/
+/*.iml
+/.vscode/
