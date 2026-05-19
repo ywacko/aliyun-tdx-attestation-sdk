@@ -5,6 +5,13 @@ import com.ywacko.aliyun.tdx.attestation.model.QuoteGenerationRequest;
 import com.ywacko.aliyun.tdx.attestation.model.QuoteGenerationResult;
 import com.ywacko.aliyun.tdx.attestation.jna.JnaQuoteProvider;
 import com.ywacko.aliyun.tdx.attestation.jna.NativeTdxAttestationApi;
+import com.ywacko.aliyun.tdx.attestation.verify.AliyunRemoteAttestationConfig;
+import com.ywacko.aliyun.tdx.attestation.verify.AliyunRemoteQuoteEvidenceVerifier;
+import com.ywacko.aliyun.tdx.attestation.verify.DefaultQuoteVerifier;
+import com.ywacko.aliyun.tdx.attestation.verify.QuoteEvidenceVerifier;
+import com.ywacko.aliyun.tdx.attestation.verify.QuoteVerifier;
+import com.ywacko.aliyun.tdx.attestation.verify.model.QuoteVerificationRequest;
+import com.ywacko.aliyun.tdx.attestation.verify.model.QuoteVerificationResult;
 
 import java.nio.file.Path;
 
@@ -14,11 +21,15 @@ import java.nio.file.Path;
  */
 public final class AliyunTdxAttestationClient {
 
-    // 当前固定通过 JNA provider 生成 Quote。
-    private final JnaQuoteProvider quoteProvider;
+    // 当前固定通过 JNA provider 生成 Quote；懒加载避免只做验证时也加载 native 库。
+    private final JnaQuoteProvider.Builder jnaBuilder;
+    private volatile JnaQuoteProvider quoteProvider;
+    // 当前验证接口默认做字段自洽校验，并通过可插拔 verifier 承接证明服务结果。
+    private final QuoteVerifier quoteVerifier;
 
     private AliyunTdxAttestationClient(Builder builder) {
-        this.quoteProvider = builder.jnaBuilder.build();
+        this.jnaBuilder = builder.jnaBuilder;
+        this.quoteVerifier = builder.verifierBuilder.build();
     }
 
     public static Builder builder() {
@@ -30,12 +41,31 @@ public final class AliyunTdxAttestationClient {
     }
 
     public QuoteGenerationResult generateQuote(QuoteGenerationRequest request) {
-        return quoteProvider.generateQuote(request);
+        return quoteProvider().generateQuote(request);
+    }
+
+    public QuoteVerificationResult verifyQuote(QuoteVerificationRequest request) {
+        return quoteVerifier.verify(request);
+    }
+
+    private JnaQuoteProvider quoteProvider() {
+        JnaQuoteProvider local = quoteProvider;
+        if (local == null) {
+            synchronized (this) {
+                local = quoteProvider;
+                if (local == null) {
+                    local = jnaBuilder.build();
+                    quoteProvider = local;
+                }
+            }
+        }
+        return local;
     }
 
     public static final class Builder {
         // 当前只保留 JNA builder，便于按需覆写库名和设备路径。
         private final JnaQuoteProvider.Builder jnaBuilder = JnaQuoteProvider.builder();
+        private final DefaultQuoteVerifier.Builder verifierBuilder = DefaultQuoteVerifier.builder();
 
         private Builder() {
         }
@@ -53,6 +83,18 @@ public final class AliyunTdxAttestationClient {
 
         public Builder tdxDevicePath(Path tdxDevicePath) {
             jnaBuilder.tdxDevicePath(tdxDevicePath);
+            return this;
+        }
+
+        public Builder quoteEvidenceVerifier(QuoteEvidenceVerifier quoteEvidenceVerifier) {
+            verifierBuilder.evidenceVerifier(quoteEvidenceVerifier);
+            return this;
+        }
+
+        public Builder remoteAttestationConfig(AliyunRemoteAttestationConfig config) {
+            verifierBuilder.evidenceVerifier(AliyunRemoteQuoteEvidenceVerifier.builder()
+                    .config(config)
+                    .build());
             return this;
         }
 

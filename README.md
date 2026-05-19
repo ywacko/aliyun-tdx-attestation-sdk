@@ -2,13 +2,13 @@
 
 `aliyun-tdx-attestation-sdk` 是一个面向 Java 服务的 SDK，用于在阿里云 `TDX VM` 内通过 `JNA` 直接调用本机 `TDX` 运行时生成 attestation `Quote`。
 
-这套 SDK 的运行前提是：
+这套 SDK 的 `generateQuote(...)` 运行前提是：
 
 - 当前服务必须运行在阿里云 `TDX VM` 中
 - 当前机器必须存在 `/dev/tdx_guest`
 - 当前机器必须具备 `TDX` 本地运行时能力，例如 `libtdx_attest.so`
 
-这不是一个“任意 Linux 机器都能直接使用”的通用 SDK。脱离阿里云 `TDX VM` 前提后，`Quote` 生成能力本身就不成立。
+这不是一个“任意 Linux 机器都能直接生成 Quote”的通用 SDK。脱离阿里云 `TDX VM` 前提后，`Quote` 生成能力本身就不成立。`verifyQuote(...)` 是验证侧能力，可以在普通 Java 环境运行，但需要能访问阿里云官方远程证明服务。
 
 当前设计目标不是让 `TeeGateway` 直接处理 `libtdx_attest.so` 的 native 细节，而是提供一层稳定的 Java API：
 
@@ -17,6 +17,7 @@
 - 组装 64 字节 `report_data`
 - 通过 `JNA` 直接调用 `libtdx_attest.so` 生成 `Quote`
 - 把 `Quote`、`report_data` 和摘要信息以 Java 模型返回给业务代码
+- 对网关返回的 Quote 响应字段提供 SDK 级验证接口
 
 当前部署级指纹包含三个核心字段：
 
@@ -54,6 +55,40 @@ String quoteBase64 = result.getQuoteBase64();
 String digestHex = result.getDeploymentDigestHex();
 String reportDataHex = result.getReportDataHex();
 ```
+
+验证网关 Quote 输出时，SDK 入参对应网关响应中的完整字段：
+
+```java
+QuoteVerificationRequest request = QuoteVerificationRequest.builder()
+        .service("tee-gateway")
+        .imageDigest("ywackoo/tee-gateway@sha256:3872a935ba90b46925684a818401a682fb1aefd70b397e9c110bbbd2781aef46")
+        .gitRev("021b2d7")
+        .deploymentDigestHex("<deploymentDigestHex>")
+        .reportDataHex("<reportDataHex>")
+        .quoteBase64("<quoteBase64>")
+        .quoteSha256Hex("<quoteSha256Hex>")
+        .quoteSize(12345)
+        .provider("aliyun-tdx-jna")
+        .providerVersion("v2.0.0")
+        .build();
+```
+
+SDK 默认验证器是二合一入口：先校验字段自洽关系，再调用阿里云官方远程证明服务校验 Quote 内容。调用方仍然只需要调用一个方法：
+
+```java
+QuoteVerificationResult verification = client.verifyQuote(request);
+
+if (verification.isVerified()) {
+    // Quote 字段结构和远程证明内容都已通过
+}
+```
+
+返回结果中：
+
+- `verified` 是总结果
+- `structureValid` 表示本地字段结构和派生字段自洽
+- `contentValid` 表示阿里云远程证明通过且 attested `report_data` 与本地期望一致
+- `resultCode` / `message` / 分项布尔值用于定位失败原因
 
 ## 运行机制
 
@@ -105,7 +140,7 @@ mvn package
 输出产物位于：
 
 ```text
-target/aliyun-tdx-attestation-sdk-0.1.0-SNAPSHOT.jar
+target/aliyun-tdx-attestation-sdk-2.0.0.jar
 ```
 
 ### 3. 运行时要求
@@ -114,6 +149,18 @@ SDK 实际运行时依赖：
 
 - `libtdx_attest.so`
 - `/dev/tdx_guest`
+
+上述依赖只针对 `generateQuote(...)`。`verifyQuote(...)` 本身不需要运行在 `TDX VM` 内，也不需要加载 `libtdx_attest.so`；默认实现会通过 HTTPS 调用阿里云官方远程证明服务：
+
+```text
+https://attest.cn-beijing.aliyuncs.com/v1/attestation
+```
+
+验证方只需要能访问该 endpoint 以及对应的 JWKS 地址：
+
+```text
+https://attest.cn-beijing.aliyuncs.com/jwks.json
+```
 
 如果 `TeeGateway` 运行在宿主机上，通常只需要保证上述两个条件成立。
 
@@ -137,6 +184,7 @@ AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
 2. 调用 `client.generateQuote(fingerprint)`
 3. 取出 `quoteBase64`
 4. 封装到 `TeeGateway` 接口返回
+5. 若需要验证网关返回结果，调用 `client.verifyQuote(request)`
 
 ### 5. 推荐集成形态
 
@@ -166,9 +214,12 @@ AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
 - Java SDK 代码骨架
 - `DeploymentFingerprint -> digest -> report_data` 生成逻辑
 - `JNA` 直连 `libtdx_attest.so` 的主调用链
+- `provider=aliyun-tdx-jna`、`providerVersion=v2.0.0`
+- 网关 Quote 响应字段验证接口
+- 阿里云官方远程证明服务验证接口
 - 本地 `mvn test` 验证通过
 - 已在真实阿里云 `TDX VM` 上跑通端到端联调
 - 已在阿里云 `TDX VM` 上通过纯 `JNA` 路径成功生成 `Quote`
-- 已对 `SDK` 生成出的 `Quote` 完成正式验证，`overall_appraisal_result = 1`
+- 已对真实网关 Quote 调用阿里云官方远程证明服务，并校验 JWT 与 `tdx.quote.body.report_data`
 
 详细设计见 [sdk-design.md](docs/sdk-design.md)。
