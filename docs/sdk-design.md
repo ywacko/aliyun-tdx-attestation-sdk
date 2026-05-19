@@ -1,190 +1,459 @@
 # aliyun-tdx-attestation-sdk 设计文档
 
-## 1. 目标
+## 1. 文档定位
 
-`aliyun-tdx-attestation-sdk` 面向 `TeeGateway` 这类 Java 服务，提供阿里云 `TDX VM` 环境下的 attestation `Quote` 生成能力，并提供面向网关 Quote 输出字段的 SDK 级验证接口。
+`aliyun-tdx-attestation-sdk` 是面向 Java 服务的阿里云 TDX 远程证明 SDK 实现。当前版本为 `v2.0.0`，围绕阿里云 TDX 可信执行环境构建统一的 Quote 生成与 Quote 验证代码边界。
 
-当前设计目标有三点：
+本 SDK 将以下能力沉淀为稳定、可复用的 Java API：
 
-- 对业务代码暴露稳定的 Java SDK API，而不是让业务代码直接处理 native 库
-- 把 `TeeGateway` 部署级指纹收敛成标准 `report_data` 生成流程
-- 为后续把 `Quote` 封装到网关接口返回中预留稳定边界
-- 对网关返回的 Quote 字段执行自洽校验，并默认接入阿里云官方远程证明服务
+- 部署级指纹模型与 canonical JSON 表达
+- 部署级指纹到 `SHA-256` 摘要的确定性计算
+- 64 字节 `report_data` 的标准组装
+- 基于 `JNA` 的阿里云 TDX native Quote 生成
+- 面向 Quote 材料结构的 SDK 级验证
+- 基于阿里云官方远程证明服务的 Quote 内容验证
+- 验证结果的结构化表达与分项说明
 
-## 2. 当前架构
+SDK 对调用侧暴露统一客户端 `AliyunTdxAttestationClient`。生成侧通过该客户端对接 TDX native 能力，验证侧通过该客户端复用 SDK 内置验证器与阿里云远程证明服务验证器。
 
-当前 SDK 分成三层：
+## 2. 工程结构
 
-- Java SDK 层
-  - 负责部署级指纹模型
-  - 负责 canonical JSON 和 `SHA-256` 摘要
-  - 负责生成 64 字节 `report_data`
-  - 负责通过 `JNA` 调用 native `TDX` 库并返回 `Quote`
-  - 负责对网关 Quote 响应字段进行 SDK 级二合一验证
-- Native `TDX` 运行时层
-  - 运行在阿里云 `TDX VM` 内
-  - 提供 `libtdx_attest.so`
-  - 最终执行 `tdx_att_get_quote(...)`
-- 阿里云官方远程证明层
-  - 提供 `v1/attestation` endpoint
-  - 返回 OIDC/JWT 形式的证明结果
-  - 通过 JWKS 供 SDK 验证 JWT 签名
-
-当前仓库当前的核心实现位于：
-
-- Java SDK 实现：`src/main/java`
-
-这样做的理由是：
-
-- `TeeGateway` 当前是 Java 服务
-- 阿里云现成能力是 C 库接口
-- 使用 `JNA` 可以直接从 Java 映射到本地 C 库
-- 这样可以避免额外部署 helper 进程
-- Java API 可以固定在 SDK 层，后续如有必要再替换成 `JNI`
-- `TeeGateway` 后续应通过 Maven 依赖引入 SDK，而不是直接复制 SDK 源码
-
-## 3. 部署级指纹与 report_data
-
-当前绑定对象采用 `TeeGateway` 部署级指纹：
-
-```json
-{
-  "service": "tee-gateway",
-  "image_digest": "ywackoo/tee-gateway@sha256:3872a935ba90b46925684a818401a682fb1aefd70b397e9c110bbbd2781aef46",
-  "git_rev": "021b2d7"
-}
-```
-
-当前最终方案将下面三个字段纳入核心部署级指纹：
-
-1. `service`
-2. `image_digest`
-3. `git_rev`
-
-选择这个方案的原因是：
-
-1. `service` 用于表达当前绑定的是哪个服务
-2. `image_digest` 用于表达当前绑定的是哪份不可变镜像内容
-3. `git_rev` 用于表达当前绑定的是哪版源码
-
-当前不再把以下字段纳入核心部署级指纹：
-
-1. `container_name`
-2. `image_ref`
-3. `image_id`
-
-原因如下：
-
-1. `container_name` 在扩容或更换编排方式后容易变化，不适合作为长期身份锚点
-2. `image_ref` 更适合做展示和排查字段，但 tag 口径不够稳定
-3. `image_id` 更偏本地 Docker 运行时视角，不如 `image_digest` 适合作为跨环境一致的镜像内容标识
-
-SDK 处理流程如下：
-
-1. 生成字段顺序固定的 canonical JSON
-2. 对 canonical JSON 计算 `SHA-256`
-3. 将 32 字节摘要写入 64 字节 `report_data` 的前 32 字节
-4. 剩余 32 字节补零
-5. 将完整 64 字节 `report_data` 交给本地 `TDX` native 调用
-
-这样做的好处是：
-
-- 输入稳定
-- 长度固定
-- 可以直接对齐当前已验证通过的阿里云 `TDX` 实验链路
-
-## 4. SDK API
-
-当前建议对外暴露以下主接口：
-
-- `AliyunTdxAttestationClient`
-  - `generateQuote(DeploymentFingerprint fingerprint)`
-  - `generateQuote(QuoteGenerationRequest request)`
-- `DeploymentFingerprint`
-  - 表示待绑定的部署级身份对象
-- `QuoteGenerationRequest`
-  - 表示显式传入的生成请求
-- `QuoteGenerationResult`
-  - 返回 `Quote`、摘要、`report_data` 和 provider 元信息
-- `QuoteVerificationRequest`
-  - 表示网关 Quote 响应中的完整验证入参
-- `QuoteVerificationResult`
-  - 返回总体验证结果、结构层结果、内容层结果、分项校验结果、失败原因和重算出的关键字段
-- `QuoteEvidenceVerifier`
-  - 承接真正的远程证明服务校验结果
-- `AliyunRemoteQuoteEvidenceVerifier`
-  - 默认使用阿里云官方远程证明服务验证 Quote
-
-当前生成结果中的 provider 固定为：
+SDK 核心代码位于：
 
 ```text
-provider=aliyun-tdx-jna
-providerVersion=v2.0.0
+src/main/java/com/ywacko/aliyun/tdx/attestation
 ```
 
-验证接口对调用方保持一个总入口：
+主要包结构如下：
+
+```text
+com.ywacko.aliyun.tdx.attestation
+├── AliyunTdxAttestationClient.java
+├── exception
+│   ├── AttestationException.java
+│   └── QuoteGenerationException.java
+├── jna
+│   ├── JnaQuoteProvider.java
+│   ├── NativeTdxAttestationApi.java
+│   └── TdxAttestLibrary.java
+├── model
+│   ├── DeploymentFingerprint.java
+│   ├── DeploymentFingerprintReportDataFactory.java
+│   ├── QuoteGenerationRequest.java
+│   ├── QuoteGenerationResult.java
+│   └── ReportData.java
+├── util
+│   ├── HexUtils.java
+│   └── Sha256Utils.java
+└── verify
+    ├── AliyunRemoteAttestationConfig.java
+    ├── AliyunRemoteQuoteEvidenceVerifier.java
+    ├── DefaultQuoteVerifier.java
+    ├── QuoteEvidenceVerificationResult.java
+    ├── QuoteEvidenceVerifier.java
+    ├── QuoteVerifier.java
+    └── model
+        ├── QuoteVerificationRequest.java
+        └── QuoteVerificationResult.java
+```
+
+工程依赖采用 Maven 管理，核心依赖包括：
+
+- Java 11
+- `net.java.dev.jna:jna:5.14.0`
+- `com.nimbusds:nimbus-jose-jwt:9.37.3`
+
+其中 `JNA` 负责 Java 到本地 TDX 运行时的调用映射，`nimbus-jose-jwt` 负责阿里云远程证明 JWT 与 JWKS 的验签处理。
+
+## 3. 总体架构
+
+SDK 代码架构分为四个核心层次：
+
+1. 客户端门面层
+   - `AliyunTdxAttestationClient`
+   - 对外提供 Quote 生成与 Quote 验证统一入口
+   - 通过 Builder 暴露生成侧与验证侧配置扩展点
+
+2. 部署指纹与 `report_data` 层
+   - `DeploymentFingerprint`
+   - `DeploymentFingerprintReportDataFactory`
+   - `ReportData`
+   - 负责将 Java 服务部署身份稳定映射为 TDX Quote 中的 `report_data`
+
+3. TDX Quote 生成层
+   - `JnaQuoteProvider`
+   - `NativeTdxAttestationApi`
+   - `TdxAttestLibrary`
+   - 负责加载 `libtdx_attest.so` 并调用 `tdx_att_get_quote(...)`
+
+4. Quote 验证层
+   - `DefaultQuoteVerifier`
+   - `AliyunRemoteQuoteEvidenceVerifier`
+   - `QuoteEvidenceVerifier`
+   - `QuoteVerificationRequest`
+   - `QuoteVerificationResult`
+   - 负责完成字段自洽校验、远程证明服务校验与结构化结果输出
+
+该架构将生成侧可信根能力和验证侧远程证明能力收敛到同一个 SDK 内，同时通过懒加载与接口抽象保持清晰边界。
+
+## 4. 客户端门面
+
+`AliyunTdxAttestationClient` 是 SDK 对外的统一入口，提供以下核心方法：
+
+```java
+public QuoteGenerationResult generateQuote(DeploymentFingerprint fingerprint)
+
+public QuoteGenerationResult generateQuote(QuoteGenerationRequest request)
+
+public QuoteVerificationResult verifyQuote(QuoteVerificationRequest request)
+```
+
+客户端通过 Builder 创建：
+
+```java
+AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
+        .build();
+```
+
+Builder 提供以下扩展能力：
+
+- `libraryName(String libraryName)`：配置 native 库加载名称
+- `tdxDevicePath(Path tdxDevicePath)`：配置 TDX 设备路径
+- `nativeApi(NativeTdxAttestationApi nativeApi)`：替换 native 调用封装，便于测试或专用运行环境接入
+- `quoteEvidenceVerifier(QuoteEvidenceVerifier quoteEvidenceVerifier)`：替换 Quote 远程证明验证器
+- `remoteAttestationConfig(AliyunRemoteAttestationConfig config)`：配置阿里云远程证明服务参数
+
+客户端内部对 native provider 采用懒加载机制。Quote 生成链路按需初始化 `JnaQuoteProvider`，Quote 验证链路直接使用 `QuoteVerifier`，使生成侧和验证侧能力在同一客户端中保持解耦。
+
+## 5. 部署级指纹模型
+
+`DeploymentFingerprint` 表示需要绑定到 TDX Quote 的部署级身份。当前采用三个核心字段：
+
+```java
+private final String service;
+private final String imageDigest;
+private final String gitRev;
+```
+
+字段含义如下：
+
+- `service`：服务标识，用于表达被证明对象所属 Java 服务
+- `imageDigest`：镜像内容标识，用于绑定不可变镜像内容
+- `gitRev`：代码版本标识，用于绑定源码提交版本
+
+`DeploymentFingerprint` 提供稳定的 canonical JSON 表达。参与摘要计算的是无空白字符、固定字段顺序的一行字符串：
+
+```json
+{"service":"trusted-service","image_digest":"registry.example.com/trusted-service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","git_rev":"021b2d7"}
+```
+
+代码中通过固定字段顺序生成 canonical JSON，避免序列化器差异影响摘要稳定性。字段名、字段顺序、字符串转义规则和无空白字符表达共同构成摘要口径，该设计使同一组部署身份字段在不同运行节点、不同调用时刻得到一致的摘要结果。
+
+## 6. report_data 生成机制
+
+部署级指纹到 `report_data` 的转换由 `DeploymentFingerprintReportDataFactory` 和 `ReportData` 完成。
+
+核心流程如下：
+
+1. 将 `DeploymentFingerprint` 转换为 canonical JSON
+2. 对 canonical JSON 计算 `SHA-256`
+3. 将 32 字节摘要写入 64 字节 `report_data` 的前 32 字节
+4. 将剩余 32 字节补零
+5. 将完整 64 字节 `report_data` 交给 TDX native Quote 生成链路
+
+核心 API 包括：
+
+```java
+DeploymentFingerprintReportDataFactory.canonicalJson(fingerprint)
+
+DeploymentFingerprintReportDataFactory.digestHex(fingerprint)
+
+DeploymentFingerprintReportDataFactory.reportData(fingerprint)
+
+ReportData.fromDeploymentDigest(digest)
+```
+
+该机制把服务部署身份稳定投射到 TDX Quote 的 `report_data` 字段中。验证阶段，SDK 使用相同算法重新计算期望 `report_data`，并与 Quote 中的远程证明结果进行比对。
+
+## 7. Quote 生成链路
+
+Quote 生成链路由 `JnaQuoteProvider` 承接。该类定义生成侧标准 provider 信息：
+
+```java
+public static final String PROVIDER = "aliyun-tdx-jna";
+public static final String PROVIDER_VERSION = "v2.0.0";
+```
+
+生成流程如下：
+
+1. 调用方构造 `DeploymentFingerprint`
+2. SDK 将其转换为 `QuoteGenerationRequest`
+3. SDK 生成部署级摘要与 64 字节 `report_data`
+4. `JnaQuoteProvider` 检查 TDX 设备路径
+5. `NativeTdxAttestationApi` 调用 native `tdx_att_get_quote(...)`
+6. SDK 返回 `QuoteGenerationResult`
+
+`QuoteGenerationResult` 包含以下输出：
+
+- `quoteBytes`：Quote 原始字节
+- `quoteBase64`：Quote Base64 表达
+- `quoteSha256Hex`：Quote 原始字节摘要
+- `quoteSize`：Quote 原始字节长度
+- `deploymentDigestHex`：部署级指纹摘要
+- `reportDataHex`：实际写入 Quote 的 `report_data`
+- `provider`：生成提供方标识
+- `providerVersion`：生成提供方版本
+
+该输出模型用于表达生成侧可信材料，使 Quote 原始字节、摘要、长度、`report_data` 和 provider 信息能够完整进入验证链路。
+
+## 8. Native 对接层
+
+Native 对接层包含三个核心类：
+
+- `TdxAttestLibrary`
+  - 负责通过 JNA 加载 `libtdx_attest.so`
+  - 映射 TDX native 函数
+
+- `NativeTdxAttestationApi`
+  - 封装 native 函数调用
+  - 承接 Java 字节数组与 native 内存结构转换
+  - 对 native 返回结果进行 Java 异常化表达
+
+- `JnaQuoteProvider`
+  - 作为 SDK Quote 生成 provider
+  - 负责生成前运行环境检查
+  - 负责组装 `QuoteGenerationResult`
+
+SDK 默认 native 库名称为：
+
+```text
+tdx_attest
+```
+
+默认 TDX 设备路径为：
+
+```text
+/dev/tdx_guest
+```
+
+该层将阿里云 TDX 本地运行时能力收敛在 SDK 内部，使业务服务仅面向 Java API 完成 Quote 生成。
+
+## 9. Quote 验证模型
+
+Quote 验证入口为：
 
 ```java
 QuoteVerificationResult verifyQuote(QuoteVerificationRequest request)
 ```
 
-内部检查以下关系：
+`QuoteVerificationRequest` 采用 SDK 定义的 Quote 材料字段，字段包括：
 
-1. `quoteBase64` 可以解码为 Quote 字节
-2. `SHA-256(quoteBytes)` 等于 `quoteSha256Hex`
-3. `quoteBytes.length` 等于 `quoteSize`
-4. `SHA-256(canonical(service,imageDigest,gitRev))` 等于 `deploymentDigestHex`
-5. `reportDataHex` 等于 `deploymentDigestHex` 的 32 字节摘要加 32 字节补零
-6. `provider` 等于 `aliyun-tdx-jna`
-7. `providerVersion` 等于 `v2.0.0`
-8. 阿里云官方远程证明服务接受 Quote 并返回 JWT
-9. SDK 使用 JWKS 校验 JWT 签名、`iss`、`aud`、`iat`、`nbf`、`exp`
-10. JWT claim `tcb-status` 可解析为 JSON
-11. `tcb-status.tdx.quote.body.report_data` 等于 SDK 本地期望 `reportDataHex`
+- `service`
+- `imageDigest`
+- `gitRev`
+- `deploymentDigestHex`
+- `reportDataHex`
+- `quoteBase64`
+- `quoteSha256Hex`
+- `quoteSize`
+- `provider`
+- `providerVersion`
 
-只有上述条件全部满足，`QuoteVerificationResult.verified` 才会返回 `true`。
+该模型保留 Quote 生成结果与验证所需的完整字段。SDK 会校验 Quote hash、Quote size、deployment digest、`reportDataHex`、`provider` 和 `providerVersion`；本地结构与自洽校验通过后，再调用阿里云官方远程证明服务验证 Quote 内容，并比对远程证明返回的 attested `report_data`。这样可以保证生成结果和 SDK 验证入参的字段口径一致。
 
-结果字段分层含义：
+`QuoteVerificationResult` 是结构化验证结果，包含总结果和分项结果：
 
-- `structureValid`：第 1 到第 7 项全部通过
-- `contentValid`：第 8 到第 11 项全部通过
-- `verified`：`structureValid && contentValid`
-- `quoteValid`：阿里云远程证明和 JWT 校验通过
-- `attestedReportDataMatched`：JWT 中的 attested `report_data` 与本地期望一致
+- `verified`
+- `resultCode`
+- `message`
+- `structureValid`
+- `contentValid`
+- `quoteValid`
+- `quoteHashMatched`
+- `quoteSizeMatched`
+- `deploymentDigestMatched`
+- `reportDataMatched`
+- `attestedReportDataMatched`
+- `providerMatched`
+- `providerVersionMatched`
+- `expectedDeploymentDigestHex`
+- `actualDeploymentDigestHex`
+- `expectedReportDataHex`
+- `actualReportDataHex`
+- `attestedReportDataHex`
+- `verifierProvider`
+- `verifierVersion`
 
-## 5. 运行要求
+其中 `verified` 是总验证结果；其余字段用于呈现结构校验、远程证明校验和 `report_data` 匹配细节。
 
-SDK 的生成能力运行前提必须明确：
+## 10. 默认验证器
 
-- 当前服务运行在阿里云 `TDX VM`
-- 当前机器存在 `/dev/tdx_guest`
-- 当前机器可加载 `libtdx_attest.so`
+`DefaultQuoteVerifier` 是 SDK 默认 Quote 验证器，提供本地字段自洽校验与远程证明内容校验的二合一实现。
 
-如果上述前提不成立，`Quote` 生成能力本身就不成立。
+默认验证器标识为：
 
-SDK 的验证能力不要求运行在 `TDX VM`，也不加载 `libtdx_attest.so`。默认验证链路依赖：
+```java
+public static final String VERIFIER_PROVIDER = "aliyun-tdx-sdk-local-verifier";
+public static final String VERIFIER_VERSION = "v2.0.0";
+```
 
-- 可访问阿里云官方远程证明服务 `https://attest.cn-beijing.aliyuncs.com/v1/attestation`
-- 可访问 JWKS `https://attest.cn-beijing.aliyuncs.com/jwks.json`
+验证流程如下：
 
-如果后续把 `TeeGateway` 放进 Docker 容器，运行要求至少包括：
+1. 从 `QuoteVerificationRequest` 重建 `DeploymentFingerprint`
+2. 基于部署级指纹重新计算 `expectedDeploymentDigestHex`
+3. 基于部署级摘要重新组装 `expectedReportDataHex`
+4. 解码 `quoteBase64` 得到 Quote 原始字节
+5. 校验 `quoteSha256Hex` 与 Quote 原始字节是否一致
+6. 校验 `quoteSize` 与 Quote 原始字节长度是否一致
+7. 校验 `deploymentDigestHex` 与重新计算结果是否一致
+8. 校验 `reportDataHex` 与重新组装结果是否一致
+9. 校验 `provider` 与 `providerVersion` 是否符合 SDK 生成侧标准
+10. 本地结构校验通过后，调用 `QuoteEvidenceVerifier` 执行远程证明校验
+11. 比对远程证明返回的 attested `report_data` 与本地期望值
+12. 汇总生成 `QuoteVerificationResult`
 
-- 容器内可访问 `/dev/tdx_guest`
-- 容器内可加载 `libtdx_attest.so`
-- JVM 进程有权限访问本地 `TDX` 运行时能力
+默认验证器输出的主要结果码包括：
 
-## 6. 后续演进
+- `PASSED`
+- `INPUT_INVALID`
+- `QUOTE_BASE64_INVALID`
+- `QUOTE_HASH_MISMATCH`
+- `QUOTE_SIZE_MISMATCH`
+- `DEPLOYMENT_DIGEST_MISMATCH`
+- `REPORT_DATA_MISMATCH`
+- `PROVIDER_MISMATCH`
+- `PROVIDER_VERSION_MISMATCH`
+- `QUOTE_EVIDENCE_VERIFIER_NOT_CONFIGURED`
+- `QUOTE_EVIDENCE_INVALID`
+- `ATTESTED_REPORT_DATA_MISMATCH`
+- `FAILED`
 
-当前第一版先固定 SDK API 和 `JNA` 直连路径，不再保留多实现切换。
+该设计使验证失败原因能够结构化呈现，便于调用方区分字段结构问题、摘要自洽问题、provider 版本问题和远程证明内容问题。
 
-当前推荐的集成方式是：
+## 11. 阿里云远程证明验证器
 
-- `TeeGateway` 通过 Maven 依赖接入 `aliyun-tdx-attestation-sdk`
-- SDK 直接通过 `JNA` 调本地 `TDX` 运行时
-- 不额外部署 helper 或宿主机 attestation service
+`AliyunRemoteQuoteEvidenceVerifier` 是 SDK 内置的阿里云官方远程证明服务验证器。
 
-后续可演进方向：
+验证器标识为：
 
-- 提供 `JNI` 实现，替换当前 `JNA` 实现
-- 增加 `MRTD`、`RTMR` 等字段的解析模型
-- 增加 `TeeGateway` 直接集成示例
+```java
+public static final String PROVIDER = "aliyun-remote-attestation";
+public static final String PROVIDER_VERSION = "v2.0.0";
+```
+
+默认配置由 `AliyunRemoteAttestationConfig` 提供：
+
+```text
+DEFAULT_ATTESTATION_ENDPOINT = https://attest.cn-beijing.aliyuncs.com/v1/attestation
+DEFAULT_JWKS_URI = https://attest.cn-beijing.aliyuncs.com/jwks.json
+DEFAULT_ISSUER = https://attest.cn-beijing.aliyuncs.com
+DEFAULT_AUDIENCE = https://attest.cn-beijing.aliyuncs.com
+```
+
+默认请求超时时间为 10 秒，JWT 时钟偏移容忍时间为 2 分钟。
+
+远程证明验证流程如下：
+
+1. 将 Quote 原始字节转换为 Base64
+2. 组装阿里云远程证明服务要求的 evidence JSON
+3. 将 evidence JSON 转换为 Base64URL 表达
+4. 以 `tee=tdx` 调用阿里云远程证明 endpoint
+5. 获取远程证明服务返回的 JWT
+6. 通过 JWKS 加载与 JWT `kid` 匹配的 RSA 公钥
+7. 校验 JWT 签名算法与签名有效性
+8. 校验 issuer、audience、expiration、notBefore、issueTime
+9. 校验 JWT 中 `tee=tdx`
+10. 从 `tcb-status` 中解析 `tdx.quote.body.report_data`
+11. 将 attested `report_data` 返回给默认验证器进行最终比对
+
+该验证器将阿里云远程证明协议细节集中封装在 SDK 内部。调用侧通过调用 `verifyQuote(...)` 获得结构化验证结果。
+
+## 12. 可扩展验证接口
+
+SDK 定义了 `QuoteEvidenceVerifier` 接口，用于承接可替换的 Quote 证明验证实现：
+
+```java
+QuoteEvidenceVerificationResult verify(byte[] quoteBytes, String expectedReportDataHex)
+```
+
+默认实现为 `AliyunRemoteQuoteEvidenceVerifier`。自定义策略校验或测试场景可以通过客户端 Builder 注入自定义实现：
+
+```java
+AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
+        .quoteEvidenceVerifier(customVerifier)
+        .build();
+```
+
+也可以通过 `remoteAttestationConfig(...)` 调整阿里云远程证明服务配置：
+
+```java
+AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
+        .remoteAttestationConfig(config)
+        .build();
+```
+
+该扩展点使 SDK 在保持默认阿里云官方远程证明实现的同时，也能承接策略扩展和环境适配。
+
+## 13. 工具类与基础能力
+
+SDK 提供两个基础工具类：
+
+- `Sha256Utils`
+  - 提供 `SHA-256` 字节摘要与 hex 摘要能力
+  - 服务于部署级指纹摘要和 Quote 摘要生成
+
+- `HexUtils`
+  - 提供 hex 编码、解码与规范化能力
+  - 服务于 `deploymentDigestHex`、`reportDataHex`、Quote hash 和远程证明 claims 解析
+
+异常模型包括：
+
+- `AttestationException`
+- `QuoteGenerationException`
+
+其中 Quote 生成链路通过 `QuoteGenerationException` 表达生成侧运行环境或 native 调用异常；验证链路通过 `QuoteVerificationResult` 表达验证结论与失败原因。
+
+## 14. Maven 构建与产物
+
+SDK Maven 坐标如下：
+
+```xml
+<groupId>com.ywacko</groupId>
+<artifactId>aliyun-tdx-attestation-sdk</artifactId>
+<version>2.0.0</version>
+```
+
+执行 Maven 测试生命周期与编译校验：
+
+```bash
+mvn test
+```
+
+执行打包：
+
+```bash
+mvn package
+```
+
+生成产物：
+
+```text
+target/aliyun-tdx-attestation-sdk-2.0.0.jar
+```
+
+## 15. 当前版本代码能力总结
+
+当前版本 SDK 形成了完整的远程证明能力闭环：
+
+- 以部署级指纹作为可信身份输入
+- 以 canonical JSON 和 `SHA-256` 保证摘要稳定性
+- 以 64 字节 `report_data` 承接 TDX Quote 绑定
+- 以 `JNA` 直连阿里云 TDX native 运行时生成 Quote
+- 以 `QuoteGenerationResult` 输出完整 Quote 材料
+- 以 `QuoteVerificationRequest` 对齐 Quote 材料结构
+- 以 `DefaultQuoteVerifier` 完成本地结构与自洽校验
+- 以 `AliyunRemoteQuoteEvidenceVerifier` 对接阿里云官方远程证明服务
+- 以 `QuoteVerificationResult` 输出结构化验证结论
+- 以 Builder 与接口抽象保留运行环境配置和验证策略扩展能力
+
+通过上述代码结构，SDK 将可信执行环境证明材料的生成、表达、传递和验证统一封装为面向 Java 服务的标准能力。
