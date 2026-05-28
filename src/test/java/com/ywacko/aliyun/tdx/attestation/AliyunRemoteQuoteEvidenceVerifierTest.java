@@ -26,9 +26,11 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.Date;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AliyunRemoteQuoteEvidenceVerifierTest {
@@ -77,6 +79,26 @@ class AliyunRemoteQuoteEvidenceVerifierTest {
             assertEquals(HexUtils.normalize(reportDataHex), result.getAttestedReportDataHex());
             assertEquals(AliyunRemoteQuoteEvidenceVerifier.PROVIDER, result.getProvider());
             assertEquals(AliyunRemoteQuoteEvidenceVerifier.PROVIDER_VERSION, result.getProviderVersion());
+            assertNotNull(result.getEvidence());
+            assertEquals("jwt-id", result.getEvidence().getTokenClaims().getJwtId());
+            assertEquals("tdx", result.getEvidence().getTokenClaims().getTee());
+            assertEquals("2023-06-01", result.getEvidence().getTokenClaims().getAcsVersion());
+            assertEquals("0300", result.getEvidence().getTdxQuote().getType());
+            assertEquals("88020000", result.getEvidence().getTdxQuote().getSize());
+            assertEquals("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+                    result.getEvidence().getTdxQuote().getInitData());
+            assertEquals(HexUtils.normalize(reportDataHex), result.getEvidence().getTdxQuote().getReportData());
+            assertEquals("0500", result.getEvidence().getTdxQuote().getHeader().getVersion());
+            assertEquals("00000000", result.getEvidence().getTdxQuote().getHeader().getReserved());
+            assertEquals("00112233445566778899aabbccddeeff", result.getEvidence().getTdxQuote().getHeader().getVendorId());
+            assertEquals("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    result.getEvidence().getTdxQuote().getBody().getMrTd());
+            assertEquals("1111111111111111111111111111111111111111111111111111111111111111",
+                    result.getEvidence().getTdxQuote().getBody().getRtmr0());
+            assertEquals(Boolean.FALSE, result.getEvidence().getTdxQuote().getTdAttributes().getDebug());
+            assertEquals(Boolean.TRUE, result.getEvidence().getTdxQuote().getTdAttributes().getPerfmon());
+            assertNotNull(result.getEvidence().getEvaluationReports());
+            assertTrue(result.getEvidence().getRawClaims().containsKey("customized_claims"));
         } finally {
             server.stop(0);
         }
@@ -103,7 +125,10 @@ class AliyunRemoteQuoteEvidenceVerifierTest {
                 .claim("eat_profile", "https://www.alibabacloud.com/help/en/ecs/user-guide/eat-profile")
                 .claim("intuse", "generic")
                 .claim("tee", "tdx")
-                .claim("tcb-status", "{\"tdx.quote.body.report_data\":\"" + reportDataHex + "\"}")
+                .claim("x-acs-ver", "2023-06-01")
+                .claim("evaluation-reports", List.of(Map.of("policy-id", "policy-1")))
+                .claim("customized_claims", Map.of("runtime_data", "demo"))
+                .claim("tcb-status", tcbStatusJson(reportDataHex))
                 .build();
 
         SignedJWT signedJWT = new SignedJWT(
@@ -111,6 +136,43 @@ class AliyunRemoteQuoteEvidenceVerifierTest {
                 claimsSet);
         signedJWT.sign(new RSASSASigner(rsaKey));
         return signedJWT.serialize();
+    }
+
+    private String tcbStatusJson(String reportDataHex) {
+        return "{"
+                + "\"init_data\":\"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\","
+                + "\"report_data\":\"" + reportDataHex + "\","
+                + "\"tdx.quote.type\":\"0300\","
+                + "\"tdx.quote.size\":\"88020000\","
+                + "\"tdx.quote.header.version\":\"0500\","
+                + "\"tdx.quote.header.att_key_type\":\"0200\","
+                + "\"tdx.quote.header.tee_type\":\"81000000\","
+                + "\"tdx.quote.header.reserved\":\"00000000\","
+                + "\"tdx.quote.header.vendor_id\":\"00112233445566778899aabbccddeeff\","
+                + "\"tdx.quote.header.user_data\":\"0123456789abcdef\","
+                + "\"tdx.quote.body.tcb_svn\":\"0102030405060708090a0b0c0d0e0f10\","
+                + "\"tdx.quote.body.mr_seam\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\","
+                + "\"tdx.quote.body.mrsigner_seam\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\","
+                + "\"tdx.quote.body.seam_attributes\":\"0000000000000000\","
+                + "\"tdx.quote.body.td_attributes\":\"0000000000000000\","
+                + "\"tdx.quote.body.xfam\":\"0000000000000000\","
+                + "\"tdx.quote.body.mr_td\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
+                + "\"tdx.quote.body.mr_config_id\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\","
+                + "\"tdx.quote.body.mr_owner\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\","
+                + "\"tdx.quote.body.mr_owner_config\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\","
+                + "\"tdx.quote.body.rtmr_0\":\"1111111111111111111111111111111111111111111111111111111111111111\","
+                + "\"tdx.quote.body.rtmr_1\":\"2222222222222222222222222222222222222222222222222222222222222222\","
+                + "\"tdx.quote.body.rtmr_2\":\"3333333333333333333333333333333333333333333333333333333333333333\","
+                + "\"tdx.quote.body.rtmr_3\":\"4444444444444444444444444444444444444444444444444444444444444444\","
+                + "\"tdx.quote.body.report_data\":\"" + reportDataHex + "\","
+                + "\"tdx.quote.body.tee_tcb_svn2\":\"0102\","
+                + "\"tdx.quote.body.mr_servicetd\":\"abababababababababababababababababababababababababababababababab\","
+                + "\"tdx.td_attributes.debug\":false,"
+                + "\"tdx.td_attributes.key_locker\":false,"
+                + "\"tdx.td_attributes.perfmon\":true,"
+                + "\"tdx.td_attributes.protection_keys\":true,"
+                + "\"tdx.td_attributes.septve_disable\":false"
+                + "}";
     }
 
     private static void writeResponse(com.sun.net.httpserver.HttpExchange exchange,

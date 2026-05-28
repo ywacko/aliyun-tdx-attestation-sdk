@@ -15,7 +15,7 @@ import java.util.Objects;
 public final class JnaQuoteProvider {
 
     public static final String PROVIDER = "aliyun-tdx-jna";
-    public static final String PROVIDER_VERSION = "v2.0.0";
+    public static final String PROVIDER_VERSION = "v3.0.0";
 
     // 实际执行 native 调用的封装层。
     private final NativeTdxAttestationApi nativeApi;

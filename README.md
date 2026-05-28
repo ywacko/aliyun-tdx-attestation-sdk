@@ -1,8 +1,8 @@
 # aliyun-tdx-attestation-sdk
 
-`aliyun-tdx-attestation-sdk` 是面向 Java 服务的阿里云 TDX 远程证明 SDK。当前版本为 `v2.0.0`，提供 Quote 生成与 Quote 验证两类核心能力。
+`aliyun-tdx-attestation-sdk` 是面向 Java 服务的阿里云 TDX 远程证明 SDK。当前版本为 `v3.0.0`，提供 Quote 生成、Quote 验证与当前可信执行环境证明画像三类核心能力。
 
-SDK 将 TDX native 运行时对接、部署级指纹计算、`report_data` 组装、Quote 生成和 Quote 验证统一封装为稳定 Java API。业务服务通过 Maven 依赖接入 SDK，生成侧对接阿里云 TDX 本地运行时，验证侧对接阿里云官方远程证明服务。
+SDK 将 TDX native 运行时对接、部署级指纹计算、`report_data` 组装、Quote 生成、Quote 验证和远程证明 JWT 解析统一封装为稳定 Java API。业务服务通过 Maven 依赖接入 SDK，生成侧对接阿里云 TDX 本地运行时，验证侧对接阿里云官方远程证明服务。
 
 ## Maven 坐标
 
@@ -10,7 +10,7 @@ SDK 将 TDX native 运行时对接、部署级指纹计算、`report_data` 组�
 <dependency>
     <groupId>com.ywacko</groupId>
     <artifactId>aliyun-tdx-attestation-sdk</artifactId>
-    <version>2.0.0</version>
+    <version>3.0.0</version>
 </dependency>
 ```
 
@@ -24,6 +24,8 @@ SDK 将 TDX native 运行时对接、部署级指纹计算、`report_data` 组�
 - 对 Quote 材料结构提供 SDK 级验证入口
 - 校验 Quote hash、Quote size、deployment digest、`reportDataHex`、provider 和 providerVersion
 - 调用阿里云官方远程证明服务验证 Quote 内容，并校验 JWT 与 attested `report_data`
+- 解析远程证明 JWT 注册字段、核心 EAT 字段、`tcb-status`、TDX Quote header/body、RTMR 与 TD attributes
+- 新增当前可信执行环境证明画像接口，输出 Quote、验证结论与远程证明载荷解析结果
 
 ## 运行边界
 
@@ -100,7 +102,7 @@ String providerVersion = result.getProviderVersion();
 
 ```text
 provider=aliyun-tdx-jna
-providerVersion=v2.0.0
+providerVersion=v3.0.0
 ```
 
 ## 验证 Quote
@@ -131,7 +133,7 @@ QuoteVerificationRequest request = QuoteVerificationRequest.builder()
         .quoteSha256Hex("<quoteSha256Hex>")
         .quoteSize(12345)
         .provider("aliyun-tdx-jna")
-        .providerVersion("v2.0.0")
+        .providerVersion("v3.0.0")
         .build();
 
 AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
@@ -144,7 +146,9 @@ String resultCode = verification.getResultCode();
 String message = verification.getMessage();
 ```
 
-`verified=true` 表示本地字段结构、自洽关系和远程证明内容均已通过。`verified=false` 表示验证正常完成，但材料未通过某一项校验。
+`verified=true` 表示本地字段结构、自洽关系和远程证明内容均已通过。`verified=false` 表示验证正常完成，`resultCode` 和分项结果字段用于定位具体校验项。
+
+`generateQuote(...)` 输出 Quote 材料，`verifyQuote(...)` 输出 `QuoteVerificationResult`，`attestCurrentEnvironment(...)` 输出包含 Quote、验证结果和远程证明载荷的 `TdxEnvironmentProfile`。
 
 主要结果字段：
 
@@ -158,6 +162,39 @@ String message = verification.getMessage();
 - `attestedReportDataMatched`：远程证明返回的 `report_data` 匹配
 - `providerMatched`：Quote 生成 provider 匹配
 - `providerVersionMatched`：Quote 生成 providerVersion 匹配
+
+## 当前可信执行环境证明画像
+
+`attestCurrentEnvironment(...)` 是 v3.0.0 新增的高层接口。它在当前 TDX 运行环境中生成 Quote，随后调用远程证明服务验证 Quote，并返回 `TdxEnvironmentProfile`。
+
+示例：
+
+```java
+DeploymentFingerprint fingerprint = DeploymentFingerprint.builder()
+        .service("trusted-service")
+        .imageDigest("registry.example.com/trusted-service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        .gitRev("021b2d7")
+        .build();
+
+AliyunTdxAttestationClient client = AliyunTdxAttestationClient.builder()
+        .build();
+
+TdxEnvironmentProfile profile = client.attestCurrentEnvironment(fingerprint);
+
+boolean verified = profile.isVerified();
+QuoteGenerationResult quote = profile.getQuote();
+QuoteVerificationResult verification = profile.getVerification();
+AttestationEvidence evidence = profile.getEvidence();
+```
+
+`AttestationEvidence` 会保留验签后的远程证明 JWT 载荷：
+
+- `rawJwt`：远程证明 JWT 原文
+- `tokenClaims`：`kid`、`alg`、`iss`、`aud`、`iat`、`nbf`、`exp`、`jti`、`eat_profile`、`intuse`、`tee`、`x-acs-ver`
+- `tdxQuote`：从 `tcb-status` 扁平 JSON 中解析 `init_data`、`report_data`、`tdx.quote.type`、`tdx.quote.size`、Quote header、Quote body、TD attributes
+- `tdxQuote.header`：解析 `tdx.quote.header.version`、`tdx.quote.header.att_key_type`、`tdx.quote.header.tee_type`、`tdx.quote.header.reserved`、`tdx.quote.header.vendor_id`、`tdx.quote.header.user_data`
+- `tdxQuote.body`：解析 `tdx.quote.body.mr_td`、`tdx.quote.body.mr_seam`、`tdx.quote.body.mrsigner_seam`、`tdx.quote.body.mr_config_id`、`tdx.quote.body.mr_owner`、`tdx.quote.body.mr_owner_config`、`tdx.quote.body.rtmr_0` 到 `tdx.quote.body.rtmr_3`、`tdx.quote.body.report_data` 等
+- `rawClaims`、`tcbStatusClaims`、`evaluationReports`、`customizedClaims`：保留远程证明服务返回的原始信息，便于调用侧按需使用
 
 ## 远程证明配置
 
@@ -201,7 +238,7 @@ mvn package
 输出产物：
 
 ```text
-target/aliyun-tdx-attestation-sdk-2.0.0.jar
+target/aliyun-tdx-attestation-sdk-3.0.0.jar
 ```
 
 ## 设计文档

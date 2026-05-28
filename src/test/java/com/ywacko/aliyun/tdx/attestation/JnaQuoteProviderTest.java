@@ -43,7 +43,7 @@ class JnaQuoteProviderTest {
         assertNotNull(result);
         assertArrayEquals(fakeQuote, result.getQuoteBytes());
         assertEquals("aliyun-tdx-jna", result.getProvider());
-        assertEquals("v2.0.0", result.getProviderVersion());
+        assertEquals("v3.0.0", result.getProviderVersion());
         assertEquals(Integer.valueOf(fakeQuote.length), result.getQuoteSize());
         assertEquals("cfed02c8b7159dda5478fa6df432c3626f18c5e457346d111dd9134192f7aa51", result.getDeploymentDigestHex());
     }

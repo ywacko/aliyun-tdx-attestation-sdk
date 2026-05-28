@@ -1,5 +1,7 @@
 package com.ywacko.aliyun.tdx.attestation.verify;
 
+import com.ywacko.aliyun.tdx.attestation.verify.model.AttestationEvidence;
+
 /**
  * 外部 Quote 证明验证结果。
  * valid 只表示证明服务接受 Quote；attestedReportDataHex 用于和 SDK 本地期望 report_data 交叉比对。
@@ -11,6 +13,7 @@ public final class QuoteEvidenceVerificationResult {
     private final String provider;
     private final String providerVersion;
     private final String failureReason;
+    private final AttestationEvidence evidence;
 
     private QuoteEvidenceVerificationResult(Builder builder) {
         this.valid = builder.valid;
@@ -18,6 +21,7 @@ public final class QuoteEvidenceVerificationResult {
         this.provider = builder.provider;
         this.providerVersion = builder.providerVersion;
         this.failureReason = builder.failureReason;
+        this.evidence = builder.evidence;
     }
 
     public static Builder builder() {
@@ -60,12 +64,17 @@ public final class QuoteEvidenceVerificationResult {
         return failureReason;
     }
 
+    public AttestationEvidence getEvidence() {
+        return evidence;
+    }
+
     public static final class Builder {
         private boolean valid;
         private String attestedReportDataHex;
         private String provider;
         private String providerVersion;
         private String failureReason;
+        private AttestationEvidence evidence;
 
         private Builder() {
         }
@@ -92,6 +101,11 @@ public final class QuoteEvidenceVerificationResult {
 
         public Builder failureReason(String failureReason) {
             this.failureReason = failureReason;
+            return this;
+        }
+
+        public Builder evidence(AttestationEvidence evidence) {
+            this.evidence = evidence;
             return this;
         }
 

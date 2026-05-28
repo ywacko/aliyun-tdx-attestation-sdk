@@ -11,6 +11,9 @@ import com.nimbusds.jose.util.JSONObjectUtils;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import com.ywacko.aliyun.tdx.attestation.util.HexUtils;
+import com.ywacko.aliyun.tdx.attestation.verify.model.AttestationEvidence;
+import com.ywacko.aliyun.tdx.attestation.verify.model.AttestationTokenClaims;
+import com.ywacko.aliyun.tdx.attestation.verify.model.TdxQuoteClaims;
 
 import java.io.IOException;
 import java.net.http.HttpClient;
@@ -31,7 +34,7 @@ import java.util.Map;
 public final class AliyunRemoteQuoteEvidenceVerifier implements QuoteEvidenceVerifier {
 
     public static final String PROVIDER = "aliyun-remote-attestation";
-    public static final String PROVIDER_VERSION = "v2.0.0";
+    public static final String PROVIDER_VERSION = "v3.0.0";
 
     private static final String TCB_STATUS_CLAIM = "tcb-status";
     private static final String REPORT_DATA_CLAIM = "tdx.quote.body.report_data";
@@ -62,12 +65,13 @@ public final class AliyunRemoteQuoteEvidenceVerifier implements QuoteEvidenceVer
 
         try {
             String jwt = requestAttestationToken(quoteBytes);
-            String attestedReportDataHex = verifyJwtAndExtractReportData(jwt);
+            AttestationEvidence evidence = verifyJwtAndExtractEvidence(jwt);
             return QuoteEvidenceVerificationResult.builder()
                     .valid(true)
-                    .attestedReportDataHex(attestedReportDataHex)
+                    .attestedReportDataHex(evidence.getAttestedReportDataHex())
                     .provider(PROVIDER)
                     .providerVersion(PROVIDER_VERSION)
+                    .evidence(evidence)
                     .build();
         } catch (RuntimeException ex) {
             return failure(ex.getMessage());
@@ -109,7 +113,7 @@ public final class AliyunRemoteQuoteEvidenceVerifier implements QuoteEvidenceVer
         }
     }
 
-    private String verifyJwtAndExtractReportData(String jwtText) {
+    private AttestationEvidence verifyJwtAndExtractEvidence(String jwtText) {
         try {
             SignedJWT signedJWT = SignedJWT.parse(jwtText);
             if (!JWSAlgorithm.RS256.equals(signedJWT.getHeader().getAlgorithm())) {
@@ -136,20 +140,148 @@ public final class AliyunRemoteQuoteEvidenceVerifier implements QuoteEvidenceVer
                 throw new IllegalStateException("unexpected aliyun attestation tee claim: " + tee);
             }
 
-            String tcbStatus = claims.getStringClaim(TCB_STATUS_CLAIM);
-            if (tcbStatus == null || tcbStatus.trim().isEmpty()) {
-                throw new IllegalStateException("aliyun attestation jwt missing tcb-status claim");
-            }
-
-            Map<String, Object> tcbClaims = JSONObjectUtils.parse(tcbStatus);
-            Object reportData = tcbClaims.get(REPORT_DATA_CLAIM);
-            if (!(reportData instanceof String)) {
+            Map<String, Object> tcbClaims = parseTcbStatusClaims(claims);
+            TdxQuoteClaims tdxQuote = buildTdxQuoteClaims(tcbClaims);
+            if (tdxQuote.getBody() == null || tdxQuote.getBody().getReportData() == null) {
                 throw new IllegalStateException("aliyun attestation jwt missing " + REPORT_DATA_CLAIM);
             }
-            return HexUtils.normalize((String) reportData);
+
+            return AttestationEvidence.builder()
+                    .rawJwt(jwtText)
+                    .tokenClaims(buildTokenClaims(signedJWT, claims))
+                    .tdxQuote(tdxQuote)
+                    .rawClaims(claims.getClaims())
+                    .tcbStatusClaims(tcbClaims)
+                    .evaluationReports(claims.getClaim("evaluation-reports"))
+                    .customizedClaims(claims.getClaim("customized_claims"))
+                    .build();
         } catch (ParseException | JOSEException ex) {
             throw new IllegalStateException("failed to verify aliyun attestation jwt: " + ex.getMessage(), ex);
         }
+    }
+
+    private Map<String, Object> parseTcbStatusClaims(JWTClaimsSet claims) throws ParseException {
+        Object tcbStatus = claims.getClaim(TCB_STATUS_CLAIM);
+        if (tcbStatus == null) {
+            throw new IllegalStateException("aliyun attestation jwt missing tcb-status claim");
+        }
+        if (tcbStatus instanceof String) {
+            String text = ((String) tcbStatus).trim();
+            if (text.isEmpty()) {
+                throw new IllegalStateException("aliyun attestation jwt missing tcb-status claim");
+            }
+            return JSONObjectUtils.parse(text);
+        }
+        throw new IllegalStateException("unexpected aliyun attestation tcb-status claim type: "
+                + tcbStatus.getClass().getName());
+    }
+
+    private AttestationTokenClaims buildTokenClaims(SignedJWT signedJWT, JWTClaimsSet claims) {
+        Map<String, Object> rawClaims = claims.getClaims();
+        return AttestationTokenClaims.builder()
+                .keyId(signedJWT.getHeader().getKeyID())
+                .algorithm(signedJWT.getHeader().getAlgorithm().getName())
+                .issuer(claims.getIssuer())
+                .audience(claims.getAudience())
+                .issuedAt(toInstant(claims.getIssueTime()))
+                .notBefore(toInstant(claims.getNotBeforeTime()))
+                .expiresAt(toInstant(claims.getExpirationTime()))
+                .jwtId(claims.getJWTID())
+                .eatProfile(readString(rawClaims, "eat_profile"))
+                .intendedUse(readString(rawClaims, "intuse"))
+                .tee(readString(rawClaims, "tee"))
+                .acsVersion(readString(rawClaims, "x-acs-ver"))
+                .build();
+    }
+
+    private TdxQuoteClaims buildTdxQuoteClaims(Map<String, Object> tcbClaims) {
+        TdxQuoteClaims.Header header = TdxQuoteClaims.Header.builder()
+                .version(readHex(tcbClaims, "tdx.quote.header.version"))
+                .attKeyType(readHex(tcbClaims, "tdx.quote.header.att_key_type"))
+                .teeType(readHex(tcbClaims, "tdx.quote.header.tee_type"))
+                .reserved(readHex(tcbClaims, "tdx.quote.header.reserved"))
+                .vendorId(readHex(tcbClaims, "tdx.quote.header.vendor_id"))
+                .userData(readHex(tcbClaims, "tdx.quote.header.user_data"))
+                .build();
+
+        TdxQuoteClaims.Body body = TdxQuoteClaims.Body.builder()
+                .tcbSvn(readHex(tcbClaims, "tdx.quote.body.tcb_svn"))
+                .mrSeam(readHex(tcbClaims, "tdx.quote.body.mr_seam"))
+                .mrSignerSeam(readHex(tcbClaims, "tdx.quote.body.mrsigner_seam"))
+                .seamAttributes(readHex(tcbClaims, "tdx.quote.body.seam_attributes"))
+                .tdAttributes(readHex(tcbClaims, "tdx.quote.body.td_attributes"))
+                .xfam(readHex(tcbClaims, "tdx.quote.body.xfam"))
+                .mrTd(readHex(tcbClaims, "tdx.quote.body.mr_td"))
+                .mrConfigId(readHex(tcbClaims, "tdx.quote.body.mr_config_id"))
+                .mrOwner(readHex(tcbClaims, "tdx.quote.body.mr_owner"))
+                .mrOwnerConfig(readHex(tcbClaims, "tdx.quote.body.mr_owner_config"))
+                .rtmr0(readHex(tcbClaims, "tdx.quote.body.rtmr_0"))
+                .rtmr1(readHex(tcbClaims, "tdx.quote.body.rtmr_1"))
+                .rtmr2(readHex(tcbClaims, "tdx.quote.body.rtmr_2"))
+                .rtmr3(readHex(tcbClaims, "tdx.quote.body.rtmr_3"))
+                .reportData(readHex(tcbClaims, REPORT_DATA_CLAIM))
+                .teeTcbSvn2(readHex(tcbClaims, "tdx.quote.body.tee_tcb_svn2"))
+                .mrServiceTd(readHex(tcbClaims, "tdx.quote.body.mr_servicetd"))
+                .build();
+
+        TdxQuoteClaims.TdAttributes tdAttributes = TdxQuoteClaims.TdAttributes.builder()
+                .debug(readBoolean(tcbClaims, "tdx.td_attributes.debug"))
+                .keyLocker(readBoolean(tcbClaims, "tdx.td_attributes.key_locker"))
+                .perfmon(readBoolean(tcbClaims, "tdx.td_attributes.perfmon"))
+                .protectionKeys(readBoolean(tcbClaims, "tdx.td_attributes.protection_keys"))
+                .septveDisable(readBoolean(tcbClaims, "tdx.td_attributes.septve_disable"))
+                .build();
+
+        return TdxQuoteClaims.builder()
+                .type(readHex(tcbClaims, "tdx.quote.type"))
+                .size(readHex(tcbClaims, "tdx.quote.size"))
+                .initData(readHex(tcbClaims, "init_data"))
+                .reportData(readHex(tcbClaims, "report_data"))
+                .header(header)
+                .body(body)
+                .tdAttributes(tdAttributes)
+                .build();
+    }
+
+    private Instant toInstant(Date date) {
+        return date == null ? null : date.toInstant();
+    }
+
+    private String readString(Map<String, Object> claims, String path) {
+        Object value = claims == null ? null : claims.get(path);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof String) {
+            String text = ((String) value).trim();
+            return text.isEmpty() ? null : text;
+        }
+        return String.valueOf(value);
+    }
+
+    private String readHex(Map<String, Object> claims, String path) {
+        String value = readString(claims, path);
+        return value == null ? null : HexUtils.normalize(value);
+    }
+
+    private Boolean readBoolean(Map<String, Object> claims, String path) {
+        Object value = claims == null ? null : claims.get(path);
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue() != 0;
+        }
+        if (value instanceof String) {
+            String text = ((String) value).trim().toLowerCase();
+            if ("true".equals(text) || "1".equals(text) || "yes".equals(text)) {
+                return Boolean.TRUE;
+            }
+            if ("false".equals(text) || "0".equals(text) || "no".equals(text)) {
+                return Boolean.FALSE;
+            }
+        }
+        return null;
     }
 
     private JWK loadJwk(String keyId) {

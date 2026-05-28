@@ -6,6 +6,7 @@ import com.ywacko.aliyun.tdx.attestation.model.DeploymentFingerprintReportDataFa
 import com.ywacko.aliyun.tdx.attestation.model.ReportData;
 import com.ywacko.aliyun.tdx.attestation.util.HexUtils;
 import com.ywacko.aliyun.tdx.attestation.util.Sha256Utils;
+import com.ywacko.aliyun.tdx.attestation.verify.model.QuoteVerificationDetails;
 import com.ywacko.aliyun.tdx.attestation.verify.model.QuoteVerificationRequest;
 import com.ywacko.aliyun.tdx.attestation.verify.model.QuoteVerificationResult;
 
@@ -18,7 +19,7 @@ import java.util.Base64;
 public final class DefaultQuoteVerifier implements QuoteVerifier {
 
     public static final String VERIFIER_PROVIDER = "aliyun-tdx-sdk-local-verifier";
-    public static final String VERIFIER_VERSION = "v2.0.0";
+    public static final String VERIFIER_VERSION = "v3.0.0";
 
     private final QuoteEvidenceVerifier evidenceVerifier;
     private final String expectedProvider;
@@ -36,6 +37,10 @@ public final class DefaultQuoteVerifier implements QuoteVerifier {
 
     @Override
     public QuoteVerificationResult verify(QuoteVerificationRequest request) {
+        return verifyDetailed(request).getVerification();
+    }
+
+    public QuoteVerificationDetails verifyDetailed(QuoteVerificationRequest request) {
         if (request == null) {
             return failed("INPUT_INVALID", "request must not be null");
         }
@@ -104,7 +109,7 @@ public final class DefaultQuoteVerifier implements QuoteVerifier {
                 evidenceResult
         );
 
-        return QuoteVerificationResult.builder()
+        QuoteVerificationResult verification = QuoteVerificationResult.builder()
                 .verified(verified)
                 .resultCode(resultCode)
                 .message(verified ? "quote verification passed" : failureMessage(resultCode, evidenceResult))
@@ -126,16 +131,19 @@ public final class DefaultQuoteVerifier implements QuoteVerifier {
                 .verifierProvider(evidenceResult.getProvider())
                 .verifierVersion(evidenceResult.getProviderVersion())
                 .build();
+
+        return new QuoteVerificationDetails(verification, evidenceResult.getEvidence());
     }
 
-    private QuoteVerificationResult failed(String resultCode, String message) {
-        return QuoteVerificationResult.builder()
+    private QuoteVerificationDetails failed(String resultCode, String message) {
+        QuoteVerificationResult verification = QuoteVerificationResult.builder()
                 .verified(false)
                 .resultCode(resultCode)
                 .message(message)
                 .verifierProvider(VERIFIER_PROVIDER)
                 .verifierVersion(VERIFIER_VERSION)
                 .build();
+        return new QuoteVerificationDetails(verification, null);
     }
 
     private String firstFailureCode(byte[] quoteBytes,

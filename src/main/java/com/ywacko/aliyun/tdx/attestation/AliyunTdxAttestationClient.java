@@ -9,10 +9,12 @@ import com.ywacko.aliyun.tdx.attestation.verify.AliyunRemoteAttestationConfig;
 import com.ywacko.aliyun.tdx.attestation.verify.AliyunRemoteQuoteEvidenceVerifier;
 import com.ywacko.aliyun.tdx.attestation.verify.DefaultQuoteVerifier;
 import com.ywacko.aliyun.tdx.attestation.verify.QuoteEvidenceVerifier;
-import com.ywacko.aliyun.tdx.attestation.verify.QuoteVerifier;
+import com.ywacko.aliyun.tdx.attestation.model.TdxEnvironmentProfile;
+import com.ywacko.aliyun.tdx.attestation.verify.model.QuoteVerificationDetails;
 import com.ywacko.aliyun.tdx.attestation.verify.model.QuoteVerificationRequest;
 import com.ywacko.aliyun.tdx.attestation.verify.model.QuoteVerificationResult;
 
+import java.time.Instant;
 import java.nio.file.Path;
 
 /**
@@ -25,7 +27,7 @@ public final class AliyunTdxAttestationClient {
     private final JnaQuoteProvider.Builder jnaBuilder;
     private volatile JnaQuoteProvider quoteProvider;
     // 当前验证接口默认做字段自洽校验，并通过可插拔 verifier 承接证明服务结果。
-    private final QuoteVerifier quoteVerifier;
+    private final DefaultQuoteVerifier quoteVerifier;
 
     private AliyunTdxAttestationClient(Builder builder) {
         this.jnaBuilder = builder.jnaBuilder;
@@ -46,6 +48,24 @@ public final class AliyunTdxAttestationClient {
 
     public QuoteVerificationResult verifyQuote(QuoteVerificationRequest request) {
         return quoteVerifier.verify(request);
+    }
+
+    public TdxEnvironmentProfile attestCurrentEnvironment(DeploymentFingerprint fingerprint) {
+        QuoteGenerationResult quote = generateQuote(fingerprint);
+        QuoteVerificationRequest request = QuoteVerificationRequest.builder()
+                .service(fingerprint.getService())
+                .imageDigest(fingerprint.getImageDigest())
+                .gitRev(fingerprint.getGitRev())
+                .deploymentDigestHex(quote.getDeploymentDigestHex())
+                .reportDataHex(quote.getReportDataHex())
+                .quoteBase64(quote.getQuoteBase64())
+                .quoteSha256Hex(quote.getQuoteSha256Hex())
+                .quoteSize(quote.getQuoteSize())
+                .provider(quote.getProvider())
+                .providerVersion(quote.getProviderVersion())
+                .build();
+        QuoteVerificationDetails details = quoteVerifier.verifyDetailed(request);
+        return new TdxEnvironmentProfile(fingerprint, quote, details.getVerification(), details.getEvidence(), Instant.now());
     }
 
     private JnaQuoteProvider quoteProvider() {
